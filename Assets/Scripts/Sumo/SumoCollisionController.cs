@@ -67,6 +67,9 @@ namespace Sumo
         private const float FallbackRamStopEnergyThreshold = 0.08f;
         private const float FallbackImpactVerticalLift = 0.02f;
         private const float FallbackImpactBurstDuration = 0.08f;
+        private const float FallbackFirstImpactBurstFrontload = 0.88f;
+        private const float FallbackFirstImpactKickShare = 0.72f;
+        private const float FallbackAttackerReferenceTopSpeed = 10f;
         private const int FallbackMaxRamDurationTicks = 32;
         private const int FallbackMinReimpactTicks = 16;
         private const float RamContactBlendRisePerSecond = 13f;
@@ -553,7 +556,6 @@ namespace Sumo
             float relativeClosingSpeed = Mathf.Max(snapshot.RelativeClosingSpeed, Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, attackerToVictim)));
 
             float attackerForwardSpeed = Mathf.Max(entryForwardSpeed, Mathf.Max(currentForwardSpeed, intentForwardSpeed));
-            attackerForwardSpeed = Mathf.Max(attackerForwardSpeed, relativeClosingSpeed);
 
             float minImpactSpeed = attacker.physicsConfig != null ? attacker.physicsConfig.MinImpactSpeed : 0f;
             if (attackerForwardSpeed < minImpactSpeed)
@@ -569,9 +571,12 @@ namespace Sumo
                 ? attacker.ballController.GetDashImpactMultiplier(configuredDashMultiplier)
                 : Mathf.Max(1f, configuredDashMultiplier);
 
+            float attackerReferenceTopSpeed = GetAttackerReferenceTopSpeed(attacker);
+
             SumoInitialImpactResult impactResult = SumoImpactResolver.ComputeInitialImpact(
                 attacker.physicsConfig,
                 attackerForwardSpeed,
+                attackerReferenceTopSpeed,
                 relativeClosingSpeed,
                 directionDot,
                 dashMultiplier);
@@ -585,8 +590,18 @@ namespace Sumo
                 attackerToVictim,
                 GetImpactVerticalLift(attacker));
 
-            ApplyPredictedImpulse(victim, impulseDirection * impactResult.VictimImpulse * PredictedImpactScale);
-            ApplyPredictedImpulse(attacker, -impulseDirection * impactResult.AttackerRecoilImpulse * PredictedImpactScale);
+            float rawPredictedVictimImpulse = impactResult.VictimImpulse * PredictedImpactScale;
+            float predictedVictimImpulseCap = Mathf.Max(0.25f, attackerForwardSpeed * 0.48f);
+            float predictedVictimImpulse = Mathf.Min(rawPredictedVictimImpulse, predictedVictimImpulseCap);
+
+            float predictedScale = impactResult.VictimImpulse > 0.0001f
+                ? predictedVictimImpulse / impactResult.VictimImpulse
+                : 0f;
+
+            float predictedAttackerImpulse = impactResult.AttackerRecoilImpulse * predictedScale;
+
+            ApplyPredictedImpulse(victim, impulseDirection * predictedVictimImpulse);
+            ApplyPredictedImpulse(attacker, -impulseDirection * predictedAttackerImpulse);
 
             PredictedPairLastImpactTick[pairKey] = currentTick;
             return true;
@@ -1045,7 +1060,6 @@ namespace Sumo
             relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, currentRelativeClosingSpeed);
 
             float attackerForwardSpeed = Mathf.Max(entryForwardSpeed, Mathf.Max(currentForwardSpeed, intentForwardSpeed));
-            attackerForwardSpeed = Mathf.Max(attackerForwardSpeed, relativeClosingSpeed);
             relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, attackerForwardSpeed);
 
             float minPushSpeed = attacker.physicsConfig != null
@@ -1076,9 +1090,12 @@ namespace Sumo
                 ? attacker.ballController.GetDashImpactMultiplier(configuredDashMultiplier)
                 : Mathf.Max(1f, configuredDashMultiplier);
 
+            float attackerReferenceTopSpeed = GetAttackerReferenceTopSpeed(attacker);
+
             SumoInitialImpactResult impactResult = SumoImpactResolver.ComputeInitialImpact(
                 attacker.physicsConfig,
                 attackerForwardSpeed,
+                attackerReferenceTopSpeed,
                 relativeClosingSpeed,
                 directionDot,
                 dashMultiplier);
@@ -1115,6 +1132,7 @@ namespace Sumo
             pairState.BreakStartTick = 0;
             pairState.MaxSeparationSinceBreak = 0f;
             pairState.ReengageReadyTick = 0;
+            ApplyInitialImpactKickoff(ref pairState, attacker, victim);
             ApplyInitialImpactBurstStep(ref pairState, attacker, victim, true);
 
             SumoImpactData impactData = new SumoImpactData(
@@ -1204,6 +1222,69 @@ namespace Sumo
             pairState.HasPendingEnter = false;
         }
 
+        private static void ApplyInitialImpactKickoff(
+            ref SumoRamState pairState,
+            SumoCollisionController attacker,
+            SumoCollisionController victim)
+        {
+            if (attacker == null
+                || victim == null
+                || attacker._rigidbody == null
+                || victim._rigidbody == null
+                || pairState.InitialVictimDeltaV <= 0.0001f)
+            {
+                return;
+            }
+
+            float configuredShare = attacker.physicsConfig != null
+                ? attacker.physicsConfig.FirstImpactKickImpulseShare
+                : FallbackFirstImpactKickShare;
+
+            if (configuredShare <= 0.0001f)
+            {
+                return;
+            }
+
+            float speed01 = attacker.physicsConfig != null
+                ? attacker.physicsConfig.EvaluateImpactSpeed01(pairState.InitialImpactSpeed)
+                : Mathf.Clamp01(pairState.InitialImpactSpeed / Mathf.Max(0.01f, FallbackAttackerReferenceTopSpeed));
+            float speedSmooth = speed01 * speed01 * (3f - 2f * speed01);
+
+            float speedScaledShare = Mathf.Clamp01(configuredShare * Mathf.Lerp(0.22f, 1f, speedSmooth));
+            if (speedScaledShare <= 0.0001f)
+            {
+                return;
+            }
+
+            Vector3 direction = pairState.ContactDirection;
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                direction = ResolveDirection(
+                    attacker._rigidbody.worldCenterOfMass,
+                    victim._rigidbody.worldCenterOfMass,
+                    pairState.ContactNormal);
+            }
+            else
+            {
+                direction.Normalize();
+            }
+
+            pairState.ContactDirection = direction;
+
+            float victimKickDeltaV = pairState.InitialVictimDeltaV * speedScaledShare;
+            float attackerKickDeltaV = pairState.InitialAttackerDeltaV * speedScaledShare;
+
+            float victimKickImpulse = victimKickDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
+            float attackerKickImpulse = attackerKickDeltaV * Mathf.Max(0.01f, attacker._rigidbody.mass);
+
+            ApplyImpulse(victim, direction * victimKickImpulse);
+            ApplyImpulse(attacker, -direction * attackerKickImpulse);
+
+            float remainingShare = Mathf.Clamp01(1f - speedScaledShare);
+            pairState.InitialVictimDeltaV *= remainingShare;
+            pairState.InitialAttackerDeltaV *= remainingShare;
+        }
+
         private bool ApplyInitialImpactBurstStep(
             ref SumoRamState pairState,
             SumoCollisionController attacker,
@@ -1238,8 +1319,11 @@ namespace Sumo
             float nextElapsed = Mathf.Min(duration, pairState.InitialImpactElapsed + dt);
             float next01 = Mathf.Clamp01(nextElapsed / duration);
 
-            float prevIntegral = EvaluateImpactBurstIntegral(prev01);
-            float nextIntegral = EvaluateImpactBurstIntegral(next01);
+            float burstFrontload = attacker != null && attacker.physicsConfig != null
+                ? attacker.physicsConfig.FirstImpactBurstFrontload
+                : FallbackFirstImpactBurstFrontload;
+            float prevIntegral = EvaluateImpactBurstIntegral(prev01, burstFrontload);
+            float nextIntegral = EvaluateImpactBurstIntegral(next01, burstFrontload);
             float segmentWeight = Mathf.Max(0f, nextIntegral - prevIntegral);
 
             if (segmentWeight <= 0.0000001f)
@@ -1273,15 +1357,19 @@ namespace Sumo
             return nextElapsed >= duration - 0.0001f;
         }
 
-        private static float EvaluateImpactBurstIntegral(float normalizedTime)
+        private static float EvaluateImpactBurstIntegral(float normalizedTime, float frontload01)
         {
             float u = Mathf.Clamp01(normalizedTime);
+            float frontload = Mathf.Clamp01(frontload01);
             const float baseWeight = 0.42f;
             const float bellWeight = 1f - baseWeight;
             float bellIntegral = 2f * u * u - (4f / 3f) * u * u * u;
             float mixed = baseWeight * u + bellWeight * bellIntegral;
             const float normalization = baseWeight + bellWeight * (2f / 3f);
-            return mixed / normalization;
+            float legacyIntegral = mixed / normalization;
+            float frontloadExponent = Mathf.Lerp(1f, 2.6f, frontload);
+            float frontLoadedIntegral = 1f - Mathf.Pow(1f - u, frontloadExponent);
+            return Mathf.Lerp(legacyIntegral, frontLoadedIntegral, frontload);
         }
 
         private static void SetRamDepleted(ref SumoRamState pairState, bool contactActive, int currentTick)
@@ -1758,6 +1846,21 @@ namespace Sumo
             float fromA = a != null && a.physicsConfig != null ? a.physicsConfig.ImpactBurstDuration : FallbackImpactBurstDuration;
             float fromB = b != null && b.physicsConfig != null ? b.physicsConfig.ImpactBurstDuration : FallbackImpactBurstDuration;
             return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.04f, 0.14f);
+        }
+
+        private static float GetAttackerReferenceTopSpeed(SumoCollisionController attacker)
+        {
+            if (attacker != null && attacker.ballController != null)
+            {
+                return Mathf.Max(0.01f, attacker.ballController.MaxSpeed);
+            }
+
+            if (attacker != null && attacker.physicsConfig != null)
+            {
+                return Mathf.Max(attacker.physicsConfig.MinImpactSpeed + 0.01f, attacker.physicsConfig.MaxImpactSpeed);
+            }
+
+            return FallbackAttackerReferenceTopSpeed;
         }
 
         private static bool RequiresPhysicalContact(SumoPairState state)

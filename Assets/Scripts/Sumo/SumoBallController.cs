@@ -2,7 +2,6 @@ using System;
 using Fusion;
 using Fusion.Addons.Physics;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace Sumo
 {
@@ -13,14 +12,11 @@ namespace Sumo
     [RequireComponent(typeof(NetworkRigidbody3D))]
     [RequireComponent(typeof(SumoBallPhysicsConfig))]
     [RequireComponent(typeof(SumoCollisionController))]
+    [RequireComponent(typeof(SumoAccelerationConfig))]
     public sealed class SumoBallController : NetworkBehaviour
     {
         [Header("Movement")]
-        [SerializeField] private float acceleration = 35f;
-        [SerializeField] private float maxSpeed = 10f;
-        [SerializeField] private float braking = 20f;
-        [FormerlySerializedAs("turnResponsiveness")]
-        [SerializeField] private float velocitySmoothing = 12f;
+        [SerializeField] private SumoAccelerationConfig accelerationConfig;
         [SerializeField] private float airControlMultiplier = 0.12f;
         [SerializeField] private float airMaxSpeedMultiplier = 1f;
         [SerializeField] private float groundCheckDistance = 0.2f;
@@ -29,7 +25,6 @@ namespace Sumo
         [SerializeField] private float wallDetachAcceleration = 6f;
         [SerializeField] private float wallSurfaceMaxUpDot = 0.3f;
         [SerializeField] private ForceMode movementForceMode = ForceMode.Acceleration;
-        [SerializeField] private float hardBrakeMultiplier = 1.8f;
         [SerializeField] private LayerMask groundMask = ~0;
 
         [Header("Visual Smoothing")]
@@ -65,6 +60,15 @@ namespace Sumo
 
         private const float FallbackAntiBulldozeSpeedThreshold = 3.8f;
         private const float FallbackIntoPlayerAccelerationScale = 0.12f;
+        private const float FallbackMaxSpeed = 50f;
+        private const float FallbackMinMoveSpeed = 4.5f;
+        private const float FallbackInitialAccelerationResponse = 36f;
+        private const float FallbackAccelerationPower = 2.2f;
+        private const float FallbackTopSpeedApproachStrength = 1.85f;
+        private const float FallbackBraking = 22f;
+        private const float FallbackHardBrakeMultiplier = 1.8f;
+        private const float FallbackRollingDrag = 1.1f;
+        private const float FallbackSteeringResponsiveness = 9f;
 
         private Vector3 _currentMoveDirection = Vector3.forward;
         private float _currentSpeed01;
@@ -74,9 +78,24 @@ namespace Sumo
 
         public Transform CameraFollowTarget => visualTarget != null ? visualTarget : transform;
         public Vector3 CurrentVelocity => _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
+        public float CurrentHorizontalSpeed
+        {
+            get
+            {
+                if (_rigidbody == null)
+                {
+                    return 0f;
+                }
+
+                Vector3 velocity = _rigidbody.linearVelocity;
+                velocity.y = 0f;
+                return velocity.magnitude;
+            }
+        }
+
         public Vector3 CurrentMoveDirection => _currentMoveDirection;
         public float CurrentSpeed01 => _currentSpeed01;
-        public float MaxSpeed => maxSpeed;
+        public float MaxSpeed => GetMaxSpeed();
         public bool IsDashing => _isDashing;
         public float DashPower => _dashPower;
         public Tick LastDashTick => _lastDashTick;
@@ -166,7 +185,7 @@ namespace Sumo
                 _currentMoveDirection = targetHorizontalVelocity.normalized;
             }
 
-            _currentSpeed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, maxSpeed));
+            _currentSpeed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, GetMaxSpeed()));
 
             if (grounded)
             {
@@ -179,7 +198,6 @@ namespace Sumo
                     hasPlayerBlockContact,
                     playerBlockNormal,
                     deltaTime);
-                ApplySoftSpeedLimit(1f, deltaTime);
                 return;
             }
 
@@ -226,16 +244,45 @@ namespace Sumo
             Vector3 playerBlockNormal,
             float deltaTime)
         {
-            float response = 1f - Mathf.Exp(-velocitySmoothing * deltaTime);
-            Vector3 smoothedHorizontalVelocity = Vector3.Lerp(horizontalVelocity, targetHorizontalVelocity, response);
-            Vector3 deltaVelocity = smoothedHorizontalVelocity - horizontalVelocity;
-            Vector3 requiredAcceleration = deltaVelocity / deltaTime;
+            Vector3 requiredAcceleration = Vector3.zero;
+            float maxSpeed = GetMaxSpeed();
 
-            float maxAppliedAcceleration = hasMoveInput
-                ? acceleration
-                : braking * (hardBrake ? hardBrakeMultiplier : 1f);
+            if (hasMoveInput && targetHorizontalVelocity.sqrMagnitude > 0.0001f)
+            {
+                Vector3 desiredDirection = targetHorizontalVelocity.normalized;
+                float inputStrength = Mathf.Clamp01(targetHorizontalVelocity.magnitude / Mathf.Max(0.01f, maxSpeed));
+                float speedAlongDesired = Vector3.Dot(horizontalVelocity, desiredDirection);
+                float forwardSpeed = Mathf.Max(0f, speedAlongDesired);
 
-            requiredAcceleration = Vector3.ClampMagnitude(requiredAcceleration, maxAppliedAcceleration);
+                float driveAccelerationMagnitude = EvaluateDriveAccelerationMagnitude(forwardSpeed, inputStrength);
+                Vector3 forwardAcceleration = desiredDirection * driveAccelerationMagnitude;
+
+                Vector3 desiredVelocity = desiredDirection * (maxSpeed * inputStrength);
+                Vector3 velocityError = desiredVelocity - horizontalVelocity;
+                Vector3 steeringAcceleration = velocityError * GetSteeringResponsiveness();
+                float steeringCap = GetBraking() * (hardBrake ? GetHardBrakeMultiplier() : 1f);
+                steeringAcceleration = Vector3.ClampMagnitude(steeringAcceleration, steeringCap);
+
+                float forwardSteering = Vector3.Dot(steeringAcceleration, desiredDirection);
+                if (forwardSteering > 0f)
+                {
+                    steeringAcceleration -= desiredDirection * forwardSteering;
+                }
+
+                requiredAcceleration = forwardAcceleration + steeringAcceleration;
+            }
+            else
+            {
+                float speed = horizontalVelocity.magnitude;
+                if (speed > 0.0001f)
+                {
+                    float deceleration = EvaluateCoastDeceleration(hardBrake);
+                    requiredAcceleration = -horizontalVelocity / speed * deceleration;
+                }
+            }
+
+            Vector3 rollingDragAcceleration = EvaluateRollingDragAcceleration(horizontalVelocity, hasMoveInput);
+            requiredAcceleration += rollingDragAcceleration;
 
             bool limitIntoPlayers = physicsConfig == null || physicsConfig.LimitAccelerationIntoPlayers;
             float intoPlayerScale = physicsConfig != null
@@ -265,6 +312,7 @@ namespace Sumo
             }
 
             ApplyAcceleration(requiredAcceleration, deltaTime);
+            ApplySoftSpeedLimit(1f, deltaTime);
         }
 
         private Vector3 ComputeAirAcceleration(Vector3 targetHorizontalVelocity, Vector3 horizontalVelocity)
@@ -274,7 +322,7 @@ namespace Sumo
                 return Vector3.zero;
             }
 
-            float speedCap = Mathf.Max(0.01f, maxSpeed * Mathf.Max(0f, airMaxSpeedMultiplier));
+            float speedCap = Mathf.Max(0.01f, GetMaxSpeed() * Mathf.Max(0f, airMaxSpeedMultiplier));
             Vector3 inputDirection = targetHorizontalVelocity.normalized;
             float speedAlongInput = Vector3.Dot(horizontalVelocity, inputDirection);
             if (speedAlongInput >= speedCap)
@@ -282,10 +330,72 @@ namespace Sumo
                 return Vector3.zero;
             }
 
-            float inputStrength = Mathf.Clamp01(targetHorizontalVelocity.magnitude / Mathf.Max(0.01f, maxSpeed));
+            float inputStrength = Mathf.Clamp01(targetHorizontalVelocity.magnitude / Mathf.Max(0.01f, GetMaxSpeed()));
             float limitScale = Mathf.Clamp01((speedCap - speedAlongInput) / speedCap);
-            float accelerationMagnitude = acceleration * airControlMultiplier * inputStrength * limitScale;
+            float speed01 = Mathf.Clamp01(Mathf.Max(0f, speedAlongInput) / speedCap);
+            float curveFactor = EvaluateDriveCurve(speed01);
+            float accelerationMagnitude = GetInitialAccelerationResponse() * airControlMultiplier * inputStrength * limitScale * curveFactor;
             return inputDirection * Mathf.Max(0f, accelerationMagnitude);
+        }
+
+        private float EvaluateDriveAccelerationMagnitude(float forwardSpeed, float inputStrength)
+        {
+            float clampedInput = Mathf.Clamp01(inputStrength);
+            if (clampedInput <= 0f)
+            {
+                return 0f;
+            }
+
+            float maxSpeed = Mathf.Max(0.01f, GetMaxSpeed());
+            float speed01 = Mathf.Clamp01(Mathf.Max(0f, forwardSpeed) / maxSpeed);
+            float curveFactor = EvaluateDriveCurve(speed01);
+            float driveAcceleration = GetInitialAccelerationResponse() * curveFactor;
+
+            float minMoveSpeed = GetMinMoveSpeed();
+            if (minMoveSpeed > 0.0001f)
+            {
+                float launchTarget = minMoveSpeed * clampedInput;
+                float launchBoost01 = Mathf.Clamp01((launchTarget - Mathf.Max(0f, forwardSpeed)) / minMoveSpeed);
+                driveAcceleration += GetInitialAccelerationResponse() * 0.35f * launchBoost01;
+            }
+
+            return driveAcceleration * clampedInput;
+        }
+
+        private float EvaluateDriveCurve(float speed01)
+        {
+            float clampedSpeed = Mathf.Clamp01(speed01);
+            float speedPower = Mathf.Max(0.01f, GetAccelerationPower());
+            float approachStrength = Mathf.Max(0.01f, GetTopSpeedApproachStrength());
+
+            float shapedSpeed = Mathf.Pow(clampedSpeed, speedPower);
+            float remaining = Mathf.Clamp01(1f - shapedSpeed);
+            return Mathf.Pow(remaining, approachStrength);
+        }
+
+        private float EvaluateCoastDeceleration(bool hardBrake)
+        {
+            float baseBraking = GetBraking() * (hardBrake ? GetHardBrakeMultiplier() : 1f);
+            return baseBraking;
+        }
+
+        private Vector3 EvaluateRollingDragAcceleration(Vector3 horizontalVelocity, bool hasMoveInput)
+        {
+            float speed = horizontalVelocity.magnitude;
+            if (speed <= 0.0001f)
+            {
+                return Vector3.zero;
+            }
+
+            float dragCoefficient = GetRollingDrag();
+            if (dragCoefficient <= 0f)
+            {
+                return Vector3.zero;
+            }
+
+            float inputDragScale = hasMoveInput ? 0.28f : 1f;
+            float dragAcceleration = dragCoefficient * speed * inputDragScale;
+            return -horizontalVelocity / speed * dragAcceleration;
         }
 
         private static Vector3 ProjectAccelerationAwayFromWall(Vector3 accelerationVector, Vector3 wallNormal)
@@ -538,6 +648,11 @@ namespace Sumo
                 _collisionController = GetComponent<SumoCollisionController>();
             }
 
+            if (accelerationConfig == null)
+            {
+                accelerationConfig = GetComponent<SumoAccelerationConfig>();
+            }
+
             if (physicsConfig == null)
             {
                 physicsConfig = GetComponent<SumoBallPhysicsConfig>();
@@ -582,6 +697,69 @@ namespace Sumo
             return 1f + (clampedConfig - 1f) * dashScale;
         }
 
+        private float GetMaxSpeed()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.MaxSpeed
+                : FallbackMaxSpeed;
+        }
+
+        private float GetMinMoveSpeed()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.MinMoveSpeed
+                : FallbackMinMoveSpeed;
+        }
+
+        private float GetInitialAccelerationResponse()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.InitialAccelerationResponse
+                : FallbackInitialAccelerationResponse;
+        }
+
+        private float GetAccelerationPower()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.AccelerationPower
+                : FallbackAccelerationPower;
+        }
+
+        private float GetTopSpeedApproachStrength()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.TopSpeedApproachStrength
+                : FallbackTopSpeedApproachStrength;
+        }
+
+        private float GetBraking()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.Braking
+                : FallbackBraking;
+        }
+
+        private float GetHardBrakeMultiplier()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.HardBrakeMultiplier
+                : FallbackHardBrakeMultiplier;
+        }
+
+        private float GetRollingDrag()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.RollingDrag
+                : FallbackRollingDrag;
+        }
+
+        private float GetSteeringResponsiveness()
+        {
+            return accelerationConfig != null
+                ? accelerationConfig.SteeringResponsiveness
+                : FallbackSteeringResponsiveness;
+        }
+
         private Vector3 GetTargetHorizontalVelocity(Vector2 moveInput, float cameraYaw)
         {
             Vector3 localInput = new Vector3(moveInput.x, 0f, moveInput.y);
@@ -594,7 +772,7 @@ namespace Sumo
 
             worldDirection.Normalize();
             float inputMagnitude = Mathf.Clamp01(moveInput.magnitude);
-            return worldDirection * (maxSpeed * inputMagnitude);
+            return worldDirection * (GetMaxSpeed() * inputMagnitude);
         }
 
         private void ApplyAcceleration(Vector3 accelerationVector, float deltaTime)
@@ -629,7 +807,7 @@ namespace Sumo
             Vector3 velocity = _rigidbody.linearVelocity;
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
             float speed = horizontalVelocity.magnitude;
-            float speedLimit = Mathf.Max(0.01f, maxSpeed);
+            float speedLimit = Mathf.Max(0.01f, GetMaxSpeed());
 
             if (speed <= speedLimit)
             {
@@ -637,7 +815,7 @@ namespace Sumo
             }
 
             float overspeed = speed - speedLimit;
-            float correctionAcceleration = Mathf.Min(overspeed / deltaTime, braking * controlMultiplier);
+            float correctionAcceleration = Mathf.Min(overspeed / deltaTime, GetBraking() * controlMultiplier);
             if (correctionAcceleration <= 0f)
             {
                 return;
@@ -790,10 +968,6 @@ namespace Sumo
 
         private void OnValidate()
         {
-            acceleration = Mathf.Max(0f, acceleration);
-            maxSpeed = Mathf.Max(0.01f, maxSpeed);
-            braking = Mathf.Max(0f, braking);
-            velocitySmoothing = Mathf.Max(0.01f, velocitySmoothing);
             airControlMultiplier = Mathf.Max(0f, airControlMultiplier);
             airMaxSpeedMultiplier = Mathf.Max(0f, airMaxSpeedMultiplier);
             groundCheckDistance = Mathf.Max(0f, groundCheckDistance);
@@ -801,7 +975,6 @@ namespace Sumo
             fallGravityMultiplier = Mathf.Max(1f, fallGravityMultiplier);
             wallDetachAcceleration = Mathf.Max(0f, wallDetachAcceleration);
             wallSurfaceMaxUpDot = Mathf.Clamp(wallSurfaceMaxUpDot, 0f, 1f);
-            hardBrakeMultiplier = Mathf.Max(1f, hardBrakeMultiplier);
             mass = Mathf.Max(0.01f, mass);
             drag = Mathf.Max(0f, drag);
             angularDrag = Mathf.Max(0f, angularDrag);
@@ -814,6 +987,11 @@ namespace Sumo
             if (physicsConfig == null)
             {
                 physicsConfig = GetComponent<SumoBallPhysicsConfig>();
+            }
+
+            if (accelerationConfig == null)
+            {
+                accelerationConfig = GetComponent<SumoAccelerationConfig>();
             }
 
             if (Application.isPlaying)

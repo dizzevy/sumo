@@ -104,7 +104,9 @@ GameObject:
   - component: {fileID: -4605785503722955420}
   - component: {fileID: -910541034452640332}
   - component: {fileID: 2228017649297123496}
+  - component: {fileID: 7312468195501234567}
   - component: {fileID: 517348290112233445}
+  - component: {fileID: -7246895500123456789}
   - component: {fileID: -518773992144556677}
   - component: {fileID: -451421529677693719}
   - component: {fileID: 8956079541103320987}
@@ -237,10 +239,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b22fac76dadbdea469bf288bfbc8ee16, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoBallController
-  acceleration: 35
-  maxSpeed: 10
-  braking: 20
-  velocitySmoothing: 12
+  accelerationConfig: {fileID: 7312468195501234567}
   airControlMultiplier: 0.12
   airMaxSpeedMultiplier: 1
   groundCheckDistance: 0.2
@@ -249,7 +248,6 @@ MonoBehaviour:
   wallDetachAcceleration: 6
   wallSurfaceMaxUpDot: 0.3
   movementForceMode: 5
-  hardBrakeMultiplier: 1.8
   groundMask:
     serializedVersion: 2
     m_Bits: 4294967295
@@ -264,6 +262,27 @@ MonoBehaviour:
   physicsConfig: {fileID: 517348290112233445}
   enforceVisibleRuntimeMaterial: 1
   runtimeBallColor: {r: 0.24, g: 0.82, b: 0.35, a: 1}
+--- !u!114 &7312468195501234567
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5c42b14fbf5946e9a06b9a65bfbac113, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoAccelerationConfig
+  minMoveSpeed: 4.5
+  maxSpeed: 42
+  initialAccelerationResponse: 32
+  accelerationPower: 2.2
+  topSpeedApproachStrength: 1.85
+  steeringResponsiveness: 9
+  braking: 22
+  hardBrakeMultiplier: 1.8
+  rollingDrag: 1.2
 --- !u!114 &517348290112233445
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -292,8 +311,8 @@ MonoBehaviour:
   mediumPushSpeed: 4.8
   highPushSpeed: 7.4
   maxEffectivePushSpeed: 10
-  basePushImpulse: 22
-  maxPushImpulse: 28
+  basePushImpulse: 24
+  maxPushImpulse: 40
   pushCurve:
     serializedVersion: 2
     m_Curve:
@@ -377,6 +396,12 @@ MonoBehaviour:
   initialImpactTopSpeedBonus: 1.35
   initialImpactGlobalScale: 0.34
   initialImpactHighSpeedFloorScale: 0.55
+  firstImpactArcadeThreshold01: 0.32
+  firstImpactArcadeBoost: 4.2
+  firstImpactArcadeCapBoost: 3.1
+  impactBurstDuration: 0.06
+  firstImpactBurstFrontload: 0.88
+  firstImpactKickImpulseShare: 0.72
   initialImpactImpulseClamp: 0
   minRamStartSpeed: 3.3
   minRamPressureSpeed: 1.6
@@ -412,6 +437,28 @@ MonoBehaviour:
   limitAccelerationIntoPlayers: 1
   antiBulldozeSpeedThreshold: 3.8
   intoPlayerAccelerationScale: 0.12
+--- !u!114 &-7246895500123456789
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a0fb5f0ea32e47ff96f7964667d89582, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoSpeedometerUI
+  canvasRoot: {fileID: 0}
+  speedText: {fileID: 0}
+  autoCreateCanvas: 1
+  anchoredPosition: {x: 0, y: 58}
+  fontSize: 42
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  padWithLeadingZeros: 0
+  speedometerSmoothing: 11
+  kmhMultiplier: 3.6
+  horizontalSpeedOnly: 1
 --- !u!114 &-518773992144556677
 MonoBehaviour:
   m_ObjectHideFlags: 0

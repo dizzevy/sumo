@@ -44,6 +44,9 @@ namespace Sumo
         [SerializeField] private float relativeClosingBonus = 0.22f;
         [FormerlySerializedAs("initialImpactHighSpeedFloorScale")]
         [SerializeField] private float highSpeedReadableFloor = 0.58f;
+        [SerializeField] private float firstImpactArcadeThreshold01 = 0.32f;
+        [SerializeField] private float firstImpactArcadeBoost = 4.2f;
+        [SerializeField] private float firstImpactArcadeCapBoost = 3.1f;
         [FormerlySerializedAs("initialImpactAttackerRecoilScale")]
         [SerializeField] private float impactAttackerRecoilScale = 0.17f;
         [FormerlySerializedAs("verticalImpulseMultiplier")]
@@ -51,6 +54,8 @@ namespace Sumo
         [FormerlySerializedAs("dashImpactMultiplier")]
         [SerializeField] private float dashImpactMultiplier = 1.4f;
         [SerializeField] private float impactBurstDuration = 0.075f;
+        [SerializeField] private float firstImpactBurstFrontload = 0.88f;
+        [SerializeField] private float firstImpactKickImpulseShare = 0.72f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
@@ -128,10 +133,15 @@ namespace Sumo
         public float GlancingImpactMultiplier => glancingImpactMultiplier;
         public float RelativeClosingBonus => relativeClosingBonus;
         public float HighSpeedReadableFloor => highSpeedReadableFloor;
+        public float FirstImpactArcadeThreshold01 => firstImpactArcadeThreshold01;
+        public float FirstImpactArcadeBoost => firstImpactArcadeBoost;
+        public float FirstImpactArcadeCapBoost => firstImpactArcadeCapBoost;
         public float ImpactAttackerRecoilScale => impactAttackerRecoilScale;
         public float ImpactVerticalLift => impactVerticalLift;
         public float DashImpactMultiplier => dashImpactMultiplier;
         public float ImpactBurstDuration => impactBurstDuration;
+        public float FirstImpactBurstFrontload => firstImpactBurstFrontload;
+        public float FirstImpactKickImpulseShare => firstImpactKickImpulseShare;
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
@@ -231,10 +241,15 @@ namespace Sumo
             glancingImpactMultiplier = Mathf.Clamp(glancingImpactMultiplier, 0f, headOnImpactMultiplier);
             relativeClosingBonus = Mathf.Max(0f, relativeClosingBonus);
             highSpeedReadableFloor = Mathf.Clamp01(highSpeedReadableFloor);
+            firstImpactArcadeThreshold01 = Mathf.Clamp01(firstImpactArcadeThreshold01);
+            firstImpactArcadeBoost = Mathf.Max(1f, firstImpactArcadeBoost);
+            firstImpactArcadeCapBoost = Mathf.Max(1f, firstImpactArcadeCapBoost);
             impactAttackerRecoilScale = Mathf.Clamp01(impactAttackerRecoilScale);
             impactVerticalLift = Mathf.Max(0f, impactVerticalLift);
             dashImpactMultiplier = Mathf.Max(1f, dashImpactMultiplier);
             impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.14f);
+            firstImpactBurstFrontload = Mathf.Clamp01(firstImpactBurstFrontload);
+            firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 1, 2);
