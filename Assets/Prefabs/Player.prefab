@@ -104,6 +104,8 @@ GameObject:
   - component: {fileID: -4605785503722955420}
   - component: {fileID: -910541034452640332}
   - component: {fileID: 2228017649297123496}
+  - component: {fileID: 517348290112233445}
+  - component: {fileID: -518773992144556677}
   - component: {fileID: -451421529677693719}
   - component: {fileID: 8956079541103320987}
   m_Layer: 0
@@ -136,7 +138,7 @@ SphereCollider:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3715937344977919566}
-  m_Material: {fileID: 0}
+  m_Material: {fileID: 13400000, guid: 589ee13a1522cfa40a5797519fc17546, type: 2}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -169,6 +171,7 @@ MonoBehaviour:
   NetworkedBehaviours:
   - {fileID: -910541034452640332}
   - {fileID: 2228017649297123496}
+  - {fileID: -518773992144556677}
   - {fileID: -451421529677693719}
   - {fileID: 8956079541103320987}
   ForceRemoteRenderTimeframe: 0
@@ -180,9 +183,9 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3715937344977919566}
   serializedVersion: 5
-  m_Mass: 1
-  m_LinearDamping: 0
-  m_AngularDamping: 0.05
+  m_Mass: 1.1
+  m_LinearDamping: 0.22
+  m_AngularDamping: 0.14
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -197,8 +200,8 @@ Rigidbody:
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 0
-  m_Constraints: 0
-  m_CollisionDetection: 0
+  m_Constraints: 80
+  m_CollisionDetection: 2
 --- !u!114 &-910541034452640332
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -238,22 +241,196 @@ MonoBehaviour:
   maxSpeed: 10
   braking: 20
   velocitySmoothing: 12
-  airControlMultiplier: 0.45
+  airControlMultiplier: 0.12
+  airMaxSpeedMultiplier: 1
   groundCheckDistance: 0.2
+  minGroundNormalDot: 0.55
+  fallGravityMultiplier: 1.15
+  wallDetachAcceleration: 6
+  wallSurfaceMaxUpDot: 0.3
   movementForceMode: 5
   hardBrakeMultiplier: 1.8
   groundMask:
     serializedVersion: 2
     m_Bits: 4294967295
   visualTarget: {fileID: 1428568767963707644}
+  forceClientSimulationForRemotePlayers: 1
   mass: 1
   drag: 0.25
   angularDrag: 0.1
   interpolation: 0
   collisionDetectionMode: 2
   freezeTiltRotation: 1
+  physicsConfig: {fileID: 517348290112233445}
   enforceVisibleRuntimeMaterial: 1
   runtimeBallColor: {r: 0.24, g: 0.82, b: 0.35, a: 1}
+--- !u!114 &517348290112233445
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f3f2f89a8a7f4d749f1b4db34d980a11, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoBallPhysicsConfig
+  mass: 1.1
+  linearDamping: 0.22
+  angularDamping: 0.14
+  interpolation: 0
+  collisionDetectionMode: 2
+  freezeTiltRotation: 1
+  solverIterations: 10
+  solverVelocityIterations: 4
+  maxDepenetrationVelocity: 12
+  physicsMaterial: {fileID: 13400000, guid: 589ee13a1522cfa40a5797519fc17546, type: 2}
+  forceNonTriggerCollider: 1
+  colliderContactOffset: 0.015
+  minPushSpeed: 2.2
+  mediumPushSpeed: 4.8
+  highPushSpeed: 7.4
+  maxEffectivePushSpeed: 10
+  basePushImpulse: 22
+  maxPushImpulse: 28
+  pushCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.2
+      value: 0.02
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.45
+      value: 0.12
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.7
+      value: 0.45
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.88
+      value: 0.86
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  lowSpeedPenaltyMultiplier: 0.15
+  headOnMultiplier: 2.1
+  glancingHitMultiplier: 0.35
+  relativeClosingBonus: 0.2
+  dashImpactMultiplier: 1.45
+  stayHitImpulseScale: 0.35
+  verticalImpulseMultiplier: 0.02
+  repeatedHitCooldownTicks: 1
+  attackerTieSpeedEpsilon: 0.15
+  resolveTieByLowerKey: 1
+  contactBreakGraceTicks: 2
+  ramReopenCooldownTicks: 1
+  collisionResponseMode: 0
+  reengageBreakTicks: 1
+  reengageDistance: 0.05
+  reengageSpeedThreshold: 4.8
+  initialImpactAngleExponent: 1.05
+  initialImpactVictimImpulseScale: 1
+  initialImpactAttackerRecoilScale: 0.16
+  initialImpactSpeedExponent: 1.65
+  initialImpactTopSpeedBonus: 1.35
+  initialImpactGlobalScale: 0.34
+  initialImpactHighSpeedFloorScale: 0.55
+  initialImpactImpulseClamp: 0
+  minRamStartSpeed: 3.3
+  minRamPressureSpeed: 1.6
+  maxRamDurationTicks: 42
+  ramBaseImpulsePerSecond: 7
+  ramMaxImpulsePerTick: 0.3
+  ramVictimImpulseScale: 0.58
+  ramAttackerRecoilScale: 0.22
+  ramGlancingImpulseScale: 0.35
+  ramMinDirectionDot: 0.15
+  ramNoPressureGraceTicks: 3
+  ramBudgetFromImpactScale: 0.2
+  ramBudgetFromSpeedScale: 1.35
+  ramBudgetDashBonusScale: 0.5
+  ramBudgetGlancingScale: 0.55
+  minRamBudget: 0.45
+  maxRamBudget: 7.2
+  ramLowBudgetImpulseScale: 0.18
+  maxRamForceScale: 1.08
+  ramWeakThreshold: 0.4
+  ramBaseDecayPerSecond: 1.3
+  ramPressureDecayPerSecond: 1
+  ramPoorAngleDecayPerSecond: 1.4
+  ramResistanceDecayPerSecond: 0.9
+  ramNoPressureDecayPerSecond: 4
+  ramBudgetCostPerImpulse: 0.75
+  ramStopBudgetThreshold: 0.08
+  weakPushImpulsePerSecond: 0.08
+  weakPushMaxImpulsePerTick: 0.01
+  weakPushAttackerDragScale: 1
+  weakPushMinDirectionDot: 0.1
+  maxPostRamWeakPushTicks: 6
+  limitAccelerationIntoPlayers: 1
+  antiBulldozeSpeedThreshold: 3.8
+  intoPlayerAccelerationScale: 0.12
+--- !u!114 &-518773992144556677
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6adbaedff20c42c89eb6f03f11f26af5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoCollisionController
+  ballController: {fileID: 2228017649297123496}
+  physicsConfig: {fileID: 517348290112233445}
+  playerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  logImpacts: 0
+  logRamLifecycle: 0
 --- !u!114 &-451421529677693719
 MonoBehaviour:
   m_ObjectHideFlags: 0
