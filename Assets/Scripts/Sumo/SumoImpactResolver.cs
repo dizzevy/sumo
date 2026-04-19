@@ -158,6 +158,11 @@ namespace Sumo
 
             float speedCurve = EvaluateSpeedCurve(config, attackerForwardSpeed);
             float speedCurve01 = Mathf.Clamp01(speedCurve);
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            float speed01 = Mathf.InverseLerp(
+                minImpactSpeed,
+                Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed),
+                attackerForwardSpeed);
 
             float angleExponent = config != null ? config.ImpactAngleExponent : 1.15f;
             float direction01 = Mathf.Clamp01(directionDot);
@@ -166,7 +171,6 @@ namespace Sumo
             float glancing = config != null ? config.GlancingImpactMultiplier : 0.55f;
             float angleScale = Mathf.Lerp(glancing, headOn, shapedDirection);
 
-            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
             float closing01 = Mathf.Clamp01(relativeClosingSpeed / Mathf.Max(0.01f, maxImpactSpeed));
             float relativeClosingScale = 1f + (config != null ? config.RelativeClosingBonus : 0.22f) * closing01;
 
@@ -175,14 +179,24 @@ namespace Sumo
 
             float baseImpactImpulse = config != null ? config.BaseImpactImpulse : 18f;
             float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 30f;
-            float firstImpactForce = Mathf.Lerp(baseImpactImpulse, maxImpactImpulse, speedCurve01);
+            float topSpeedBonus = config != null ? config.ImpactTopSpeedBonus : 0.85f;
+            float topSpeedScale = 1f + Mathf.Max(0f, topSpeedBonus) * speed01 * speed01 * 0.45f;
+            float baseShapedImpulse = Mathf.Lerp(baseImpactImpulse * 0.12f, maxImpactImpulse * 0.34f, speedCurve01);
+            float firstImpactForce = baseShapedImpulse * topSpeedScale;
             firstImpactForce *= Mathf.Max(0f, angleScale) * Mathf.Max(1f, relativeClosingScale) * Mathf.Max(1f, dashScale);
 
-            float speed01 = Mathf.InverseLerp(minImpactSpeed, Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed), attackerForwardSpeed);
             float readableFloorScale = config != null ? config.HighSpeedReadableFloor : 0.58f;
-            float readableFloor = maxImpactImpulse * Mathf.Clamp01(readableFloorScale) * speed01 * speed01;
+            float readableFloor = maxImpactImpulse
+                * Mathf.Clamp01(readableFloorScale)
+                * speed01
+                * speed01
+                * 0.16f;
 
-            float victimImpulse = Mathf.Clamp(Mathf.Max(firstImpactForce, readableFloor), 0f, maxImpactImpulse);
+            float configuredCap = maxImpactImpulse * Mathf.Lerp(0.16f, 0.26f, speed01);
+            float physicallyPlausibleCap = attackerForwardSpeed * Mathf.Lerp(0.32f, 0.50f, speed01);
+            float dynamicImpactCap = Mathf.Max(0.5f, Mathf.Min(configuredCap, physicallyPlausibleCap));
+
+            float victimImpulse = Mathf.Clamp(Mathf.Max(firstImpactForce, readableFloor), 0f, dynamicImpactCap);
             if (victimImpulse <= 0.0001f)
             {
                 return default;
@@ -213,7 +227,8 @@ namespace Sumo
             float initialRamEnergy,
             float attackerForwardSpeed,
             float directionDot,
-            bool isPressing)
+            bool isPressing,
+            float contactBlend01 = 1f)
         {
             float dt = Mathf.Max(0f, deltaTime);
             if (ramEnergy <= 0.0001f || dt <= 0f)
@@ -233,8 +248,12 @@ namespace Sumo
                 pressure01 = 0f;
             }
 
+            float shapedPressure = pressure01 * pressure01 * (3f - 2f * pressure01);
+
             float direction01 = Mathf.Clamp01(directionDot);
             float energy01 = initialRamEnergy > 0.0001f ? Mathf.Clamp01(ramEnergy / initialRamEnergy) : 0f;
+            float contactBlend = Mathf.Clamp01(contactBlend01);
+            float contactBlendShaped = contactBlend * contactBlend * (3f - 2f * contactBlend);
 
             float ramForceScale = EvaluateRamForceScale(config, energy01);
             float glancingForceScale = config != null ? config.RamGlancingForceScale : 0.42f;
@@ -245,7 +264,7 @@ namespace Sumo
             {
                 float ramBaseAcceleration = config != null ? config.RamBaseAcceleration : 14f;
                 float ramMaxAcceleration = config != null ? config.RamMaxAcceleration : 24f;
-                victimAcceleration = ramBaseAcceleration * pressure01 * angleForceScale * ramForceScale;
+                victimAcceleration = ramBaseAcceleration * shapedPressure * angleForceScale * ramForceScale * contactBlendShaped;
                 victimAcceleration = Mathf.Clamp(victimAcceleration, 0f, Mathf.Max(ramBaseAcceleration, ramMaxAcceleration));
             }
 
@@ -262,6 +281,11 @@ namespace Sumo
                               + dt * (1f - pressure01) * lowPressureDecay
                               + dt * (1f - direction01) * angleDecay
                               + dt * victimAcceleration * accelerationEnergyCost;
+
+            energyDecay += dt * (1f - contactBlendShaped) * 1.1f;
+
+            float proportionalDecay = dt * ramEnergy * 0.55f;
+            energyDecay += proportionalDecay;
 
             if (!isPressing)
             {
@@ -308,11 +332,14 @@ namespace Sumo
 
             float rawEnergy = energyFromImpact + energyFromSpeed + energyFromDash;
             rawEnergy *= Mathf.Lerp(0.65f, 1f, Mathf.Clamp01(directionDot));
+            rawEnergy *= 0.52f;
             rawEnergy = Mathf.Max(rawEnergy, impact01 * (config != null ? config.RamMinEnergy : 0.5f));
 
             float minRamEnergy = config != null ? config.RamMinEnergy : 0.5f;
             float maxRamEnergy = config != null ? config.RamMaxEnergy : 7.5f;
-            return Mathf.Clamp(rawEnergy, minRamEnergy, maxRamEnergy);
+            float speedWeightedCap = Mathf.Lerp(1.6f, 3.0f, Mathf.Clamp01(speed01));
+            float cappedMaxEnergy = Mathf.Min(maxRamEnergy, speedWeightedCap);
+            return Mathf.Clamp(rawEnergy, minRamEnergy, Mathf.Max(minRamEnergy, cappedMaxEnergy));
         }
 
         private static float EvaluateRamForceScale(SumoBallPhysicsConfig config, float energy01)

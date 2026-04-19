@@ -50,16 +50,17 @@ namespace Sumo
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
         [SerializeField] private float dashImpactMultiplier = 1.4f;
+        [SerializeField] private float impactBurstDuration = 0.075f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
         [SerializeField] private bool resolveTieByLowerKey = true;
-        [SerializeField] private int contactBreakGraceTicks = 2;
+        [SerializeField] private int contactBreakGraceTicks = 1;
 
         [Header("Ramming")]
         [SerializeField] private float minRamStartSpeed = 2.4f;
         [SerializeField] private float minRamPressureSpeed = 1.6f;
-        [SerializeField] private int maxRamDurationTicks = 48;
+        [SerializeField] private int maxRamDurationTicks = 34;
         [FormerlySerializedAs("ramBaseImpulsePerSecond")]
         [SerializeField] private float ramBaseAcceleration = 14f;
         [FormerlySerializedAs("ramMaxImpulsePerTick")]
@@ -83,11 +84,11 @@ namespace Sumo
         [SerializeField] private float ramMinForceScale = 0.18f;
         [SerializeField] private float ramMaxForceScale = 1.1f;
         [SerializeField] private float ramForceExponent = 0.7f;
-        [SerializeField] private float ramBaseDecayPerSecond = 1.25f;
-        [SerializeField] private float ramPressureDecayPerSecond = 1.1f;
+        [SerializeField] private float ramBaseDecayPerSecond = 1.5f;
+        [SerializeField] private float ramPressureDecayPerSecond = 1.25f;
         [FormerlySerializedAs("ramPoorAngleDecayPerSecond")]
         [SerializeField] private float ramAngleDecayPerSecond = 1.4f;
-        [SerializeField] private float ramNoPressureDecayPerSecond = 4f;
+        [SerializeField] private float ramNoPressureDecayPerSecond = 4.8f;
         [FormerlySerializedAs("ramBudgetCostPerImpulse")]
         [SerializeField] private float ramAccelerationEnergyCost = 0.14f;
         [FormerlySerializedAs("ramStopBudgetThreshold")]
@@ -130,6 +131,7 @@ namespace Sumo
         public float ImpactAttackerRecoilScale => impactAttackerRecoilScale;
         public float ImpactVerticalLift => impactVerticalLift;
         public float DashImpactMultiplier => dashImpactMultiplier;
+        public float ImpactBurstDuration => impactBurstDuration;
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
@@ -232,13 +234,14 @@ namespace Sumo
             impactAttackerRecoilScale = Mathf.Clamp01(impactAttackerRecoilScale);
             impactVerticalLift = Mathf.Max(0f, impactVerticalLift);
             dashImpactMultiplier = Mathf.Max(1f, dashImpactMultiplier);
+            impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.14f);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
-            contactBreakGraceTicks = Mathf.Max(1, contactBreakGraceTicks);
+            contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 1, 2);
 
             minRamStartSpeed = Mathf.Clamp(minRamStartSpeed, minImpactSpeed, maxImpactSpeed);
             minRamPressureSpeed = Mathf.Max(0f, minRamPressureSpeed);
-            maxRamDurationTicks = Mathf.Max(1, maxRamDurationTicks);
+            maxRamDurationTicks = Mathf.Clamp(maxRamDurationTicks, 1, 34);
             ramBaseAcceleration = Mathf.Max(0f, ramBaseAcceleration);
             ramMaxAcceleration = Mathf.Max(ramBaseAcceleration, ramMaxAcceleration);
             ramAttackerDragScale = Mathf.Clamp01(ramAttackerDragScale);

@@ -238,17 +238,24 @@ namespace Sumo
             requiredAcceleration = Vector3.ClampMagnitude(requiredAcceleration, maxAppliedAcceleration);
 
             bool limitIntoPlayers = physicsConfig == null || physicsConfig.LimitAccelerationIntoPlayers;
-            float antiBulldozeSpeedThreshold = physicsConfig != null
-                ? physicsConfig.AntiBulldozeSpeedThreshold
-                : FallbackAntiBulldozeSpeedThreshold;
-
             float intoPlayerScale = physicsConfig != null
                 ? physicsConfig.IntoPlayerAccelerationScale
                 : FallbackIntoPlayerAccelerationScale;
 
             bool hasActiveRamDrive = _collisionController != null && _collisionController.HasActiveRamDrive();
-            bool shouldLimitIntoPlayer = horizontalVelocity.magnitude < antiBulldozeSpeedThreshold && !hasActiveRamDrive;
+            bool shouldLimitIntoPlayer = !hasActiveRamDrive;
             float effectiveIntoPlayerScale = intoPlayerScale;
+
+            if (!hasActiveRamDrive)
+            {
+                float antiBulldozeSpeedThreshold = physicsConfig != null
+                    ? physicsConfig.AntiBulldozeSpeedThreshold
+                    : FallbackAntiBulldozeSpeedThreshold;
+
+                float speed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, antiBulldozeSpeedThreshold));
+                float minIntoScale = Mathf.Max(0.02f, intoPlayerScale * 0.45f);
+                effectiveIntoPlayerScale = Mathf.Lerp(intoPlayerScale, minIntoScale, speed01);
+            }
 
             if (limitIntoPlayers
                 && hasPlayerBlockContact

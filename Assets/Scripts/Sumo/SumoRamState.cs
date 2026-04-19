@@ -37,6 +37,7 @@ namespace Sumo
         public int LastProcessedEnterTick;
         public int PendingEnterTick;
         public int BreakStartTick;
+        public int ReengageReadyTick;
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
         public SumoPairState State;
@@ -46,6 +47,11 @@ namespace Sumo
         public float EnterRelativeClosingSpeed;
         public float InitialImpactSpeed;
         public float InitialImpulse;
+        public float InitialImpactDuration;
+        public float InitialImpactElapsed;
+        public float InitialVictimDeltaV;
+        public float InitialAttackerDeltaV;
+        public float RamContactBlend;
         public float InitialRamEnergy;
         public float RamEnergy;
         public float MaxSeparationSinceBreak;
