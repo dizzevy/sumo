@@ -76,6 +76,9 @@ namespace Sumo
         private Tick _lastDashTick;
         private MovementCommand _lastResolvedMovementCommand;
         private bool _hasLastResolvedMovementCommand;
+        private int _contactCommandTick = int.MinValue;
+        private MovementCommand _contactCommandCache;
+        private bool _hasContactCommandCache;
         [Networked] private Vector3 ReplicatedMoveDirection { get; set; }
         [Networked] private float ReplicatedMoveStrength01 { get; set; }
         [Networked] private NetworkBool ReplicatedBrake { get; set; }
@@ -118,6 +121,12 @@ namespace Sumo
 
         public Vector3 GetContactIntentDirection(Vector3 fallbackVelocity)
         {
+            if (TryResolveContactCommandForCurrentTick(out MovementCommand command)
+                && command.MoveDirection.sqrMagnitude > 0.0001f)
+            {
+                return command.MoveDirection.normalized;
+            }
+
             if (IsLocallyDrivenForContact() && _currentMoveDirection.sqrMagnitude > 0.0001f)
             {
                 return _currentMoveDirection.normalized;
@@ -150,16 +159,23 @@ namespace Sumo
         {
             Vector3 horizontalVelocity = new Vector3(fallbackVelocity.x, 0f, fallbackVelocity.z);
             float speed = horizontalVelocity.magnitude;
+            float maxSpeed = Mathf.Max(0.01f, GetMaxSpeed());
 
             if (!IsLocallyDrivenForContact())
             {
-                float replicatedSpeed = Mathf.Clamp01(ReplicatedContactSpeed01) * Mathf.Max(0.01f, GetMaxSpeed());
-                float replicatedMoveSpeed = Mathf.Clamp01(ReplicatedMoveStrength01) * Mathf.Max(0.01f, GetMaxSpeed());
+                if (TryResolveContactCommandForCurrentTick(out MovementCommand command))
+                {
+                    float commandSpeed = Mathf.Clamp01(command.MoveStrength01) * maxSpeed;
+                    speed = Mathf.Max(speed, commandSpeed);
+                }
+
+                float replicatedSpeed = Mathf.Clamp01(ReplicatedContactSpeed01) * maxSpeed;
+                float replicatedMoveSpeed = Mathf.Clamp01(ReplicatedMoveStrength01) * maxSpeed;
                 speed = Mathf.Max(speed, Mathf.Max(replicatedSpeed, replicatedMoveSpeed));
                 return speed;
             }
 
-            float controllerSpeedEstimate = _currentSpeed01 * Mathf.Max(0.01f, GetMaxSpeed());
+            float controllerSpeedEstimate = _currentSpeed01 * maxSpeed;
             return Mathf.Max(speed, controllerSpeedEstimate);
         }
 
@@ -609,6 +625,21 @@ namespace Sumo
             return HasInputAuthority || HasStateAuthority;
         }
 
+        private bool TryResolveContactCommandForCurrentTick(out MovementCommand command)
+        {
+            int tick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            if (_contactCommandTick == tick)
+            {
+                command = _contactCommandCache;
+                return _hasContactCommandCache;
+            }
+
+            _contactCommandTick = tick;
+            _hasContactCommandCache = TryResolveMovementCommand(out _contactCommandCache);
+            command = _contactCommandCache;
+            return _hasContactCommandCache;
+        }
+
         public bool IsRemoteProxyPredictionActive()
         {
             return ShouldEnableRemoteProxySimulation()
@@ -818,6 +849,11 @@ namespace Sumo
             if (GetComponent<SumoImpactPresentation>() == null)
             {
                 gameObject.AddComponent<SumoImpactPresentation>();
+            }
+
+            if (GetComponent<SumoPlayerDebugOverlay>() == null)
+            {
+                gameObject.AddComponent<SumoPlayerDebugOverlay>();
             }
 
             if (TryGetComponent(out SumoImpactFeedback legacyImpactFeedback))

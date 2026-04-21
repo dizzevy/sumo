@@ -146,6 +146,8 @@ namespace Sumo
         private static int _pairCacheLastTick = int.MinValue;
         private static int _predictedCacheRunnerId = int.MinValue;
         private static int _predictedCacheLastTick = int.MinValue;
+        private static int _preSimVelocityCacheRunnerId = int.MinValue;
+        private static int _preSimVelocityCacheTick = int.MinValue;
 
         private const int FallbackContactBreakGraceTicks = 6;
         private const int FallbackReengageBreakTicks = 6;
@@ -181,7 +183,7 @@ namespace Sumo
         private const float ActiveContactClosingDeadZone = 0.25f;
         private const float ActiveContactPenetrationResolveRate = 12f;
         private const float ActiveContactPenetrationResolveMaxSpeed = 2.6f;
-        private const float ActiveCombatVictimAuthorityResponseShare = 0.15f;
+        private const float ActiveCombatVictimAuthorityResponseShare = 0.05f;
         private const float ActiveCombatVictimPredictedResponseShare = 0f;
         private const float ActiveCombatPenetrationSlopBonus = 0.025f;
         private const int PredictedRollbackHistoryTicks = 192;
@@ -229,6 +231,7 @@ namespace Sumo
             RegisterActiveController();
 
             int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            EnsurePreSimVelocitySamples(currentTick);
             CachePreSimVelocity(currentTick);
 
             if (CanProcessAuthorityTick())
@@ -247,9 +250,47 @@ namespace Sumo
             }
         }
 
+        private void EnsurePreSimVelocitySamples(int currentTick)
+        {
+            if (Runner == null)
+            {
+                return;
+            }
+
+            int runnerId = Runner.GetInstanceID();
+            if (_preSimVelocityCacheRunnerId == runnerId && _preSimVelocityCacheTick == currentTick)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<int, SumoCollisionController> entry in ActiveControllers)
+            {
+                SumoCollisionController controller = entry.Value;
+                if (controller == null || controller.Runner != Runner)
+                {
+                    continue;
+                }
+
+                if (controller._rigidbody == null || controller._sphereCollider == null || controller.ballController == null)
+                {
+                    controller.CacheComponents();
+                }
+
+                controller.CachePreSimVelocity(currentTick);
+            }
+
+            _preSimVelocityCacheRunnerId = runnerId;
+            _preSimVelocityCacheTick = currentTick;
+        }
+
         public bool HasActiveRamDrive()
         {
             return GetRamDriveAssist01() > 0.01f;
+        }
+
+        public bool HasActiveVictimPush()
+        {
+            return GetVictimPushAssist01() > 0.01f;
         }
 
         public float GetRamDriveAssist01()
@@ -322,6 +363,82 @@ namespace Sumo
                     float contactAssist = Mathf.Clamp01(state.RamContactBlend);
                     float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
                     assist = Mathf.Max(assist, ramAssist);
+                }
+            }
+
+            return Mathf.Clamp01(assist);
+        }
+
+        public float GetVictimPushAssist01()
+        {
+            if (Runner == null)
+            {
+                return 0f;
+            }
+
+            Dictionary<long, SumoRamState> states = HasStateAuthority
+                ? PairStates
+                : PredictedPairStates;
+
+            if (states.Count == 0)
+            {
+                return 0f;
+            }
+
+            int selfKey = GetControllerKey(this);
+            if (selfKey == 0)
+            {
+                return 0f;
+            }
+
+            int currentTick = Runner.Tick.Raw;
+            float assist = 0f;
+
+            foreach (KeyValuePair<long, SumoRamState> pair in states)
+            {
+                SumoRamState state = pair.Value;
+                if (state.VictimRef != selfKey)
+                {
+                    continue;
+                }
+
+                if (state.State != SumoPairState.InitialImpact && state.State != SumoPairState.Ramming)
+                {
+                    continue;
+                }
+
+                int contactBreakTicks = GetPairContactBreakGraceTicks(state.FirstController, state.SecondController);
+                if (!IsContactActive(state, currentTick, contactBreakTicks))
+                {
+                    continue;
+                }
+
+                if (RequiresPhysicalContact(state.State)
+                    && ComputeEdgeSeparation(state.FirstController, state.SecondController)
+                        > GetActiveContactSeparationTolerance(state.FirstController, state.SecondController))
+                {
+                    continue;
+                }
+
+                if (state.State == SumoPairState.InitialImpact)
+                {
+                    float duration = Mathf.Max(0.01f, state.InitialImpactDuration);
+                    float elapsed01 = Mathf.Clamp01(state.InitialImpactElapsed / duration);
+                    float impactAssist = Mathf.Lerp(1f, 0.72f, elapsed01);
+                    assist = Mathf.Max(assist, impactAssist);
+                    continue;
+                }
+
+                SumoCollisionController attacker = state.AttackerController;
+                float stopThreshold = GetRamStopThreshold(attacker != null ? attacker : this);
+                if (state.RamEnergy > stopThreshold)
+                {
+                    float normalizedEnergy = state.InitialRamEnergy > 0.0001f
+                        ? Mathf.Clamp01(state.RamEnergy / state.InitialRamEnergy)
+                        : 0f;
+                    float contactAssist = Mathf.Clamp01(state.RamContactBlend);
+                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
+                    assist = Mathf.Max(assist, Mathf.Lerp(0.35f, 1f, ramAssist));
                 }
             }
 
@@ -1949,7 +2066,19 @@ namespace Sumo
 
             pairState.FirstRef = GetControllerKey(first);
             pairState.SecondRef = GetControllerKey(second);
-            pairState.OwnerKey = Mathf.Min(pairState.FirstRef, pairState.SecondRef);
+            if (pairState.FirstRef == 0 || pairState.SecondRef == 0)
+            {
+                pairState.OwnerKey = 0;
+                return false;
+            }
+
+            // Keep the owner assigned by the capture phase. Predicted pairs are owned
+            // by the local processor (selfKey), while authoritative pairs use min key.
+            if (pairState.OwnerKey == 0)
+            {
+                pairState.OwnerKey = Mathf.Min(pairState.FirstRef, pairState.SecondRef);
+            }
+
             return pairState.OwnerKey != 0;
         }
 

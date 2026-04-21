@@ -29,7 +29,10 @@ namespace Sumo
 
         [Header("Smoothing Profiles")]
         [SerializeField] private bool enableLocalExtraSmoothing = false;
-        [SerializeField] private bool enableProxyExtraSmoothing = false;
+        [SerializeField] private bool enableProxyExtraSmoothing = true;
+        [SerializeField] [Range(0f, 1f)] private float authoritativeRemoteBaseBlend = 0.45f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMinBlend = 0.68f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMaxBlend = 0.92f;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localVictimProfile = default;
@@ -126,6 +129,7 @@ namespace Sumo
 
             bool localPresentation = IsLocalPresentation();
             TryTriggerVictimSmoothingFromNetworkSignal(localPresentation);
+            TryMaintainVictimSmoothingFromActivePush(localPresentation);
             TryTriggerVictimSmoothingFromCorrectionSpike(localPresentation);
             UpdateVictimBlend(localPresentation);
             bool directLocalMode = ShouldUseDirectPresentationMode(localPresentation, _victimBlend);
@@ -463,7 +467,12 @@ namespace Sumo
 
             SumoVisualSmoothing.SmoothingProfile baseProfile = localPresentation ? localProfile : proxyProfile;
             SumoVisualSmoothing.SmoothingProfile victimProfile = localPresentation ? localVictimProfile : proxyVictimProfile;
-            SumoVisualSmoothing.SmoothingProfile activeProfile = LerpProfile(baseProfile, victimProfile, _victimBlend);
+            float effectiveBlend = Mathf.Max(
+                _victimBlend,
+                Mathf.Max(
+                    GetPersistentRemoteBlend(localPresentation),
+                    GetActiveRemoteVictimBlend(localPresentation)));
+            SumoVisualSmoothing.SmoothingProfile activeProfile = LerpProfile(baseProfile, victimProfile, effectiveBlend);
             visualSmoothing.SetProfile(activeProfile, snapNow);
         }
 
@@ -471,6 +480,20 @@ namespace Sumo
         {
             if (!localPresentation)
             {
+                // On host/client the remote player's authoritative body can look much
+                // harsher than a normal client proxy during shoves. Keep that branch on
+                // the interpolation anchor full-time so both sides get the same visual
+                // smoothing path instead of one side dropping back to direct root motion.
+                if (ShouldForceContinuousRemoteSmoothing())
+                {
+                    return false;
+                }
+
+                if (GetActiveRemoteVictimBlend(localPresentation) > victimBlendResetThreshold)
+                {
+                    return false;
+                }
+
                 return !enableProxyExtraSmoothing || victimBlend <= victimBlendResetThreshold;
             }
 
@@ -481,6 +504,45 @@ namespace Sumo
             }
 
             return !enableLocalExtraSmoothing && victimBlend <= victimBlendResetThreshold;
+        }
+
+        private bool ShouldForceContinuousRemoteSmoothing()
+        {
+            return enableProxyExtraSmoothing
+                && networkObject != null
+                && networkObject.HasStateAuthority
+                && !networkObject.HasInputAuthority;
+        }
+
+        private float GetPersistentRemoteBlend(bool localPresentation)
+        {
+            if (localPresentation || !ShouldForceContinuousRemoteSmoothing())
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(authoritativeRemoteBaseBlend);
+        }
+
+        private float GetActiveRemoteVictimBlend(bool localPresentation)
+        {
+            if (localPresentation
+                || !enableVictimPushSmoothing
+                || !enableProxyExtraSmoothing
+                || collisionController == null)
+            {
+                return 0f;
+            }
+
+            float pushAssist = collisionController.GetVictimPushAssist01();
+            if (pushAssist <= victimBlendResetThreshold)
+            {
+                return 0f;
+            }
+
+            float minBlend = Mathf.Max(authoritativeRemoteBaseBlend, remoteVictimPushMinBlend);
+            float maxBlend = Mathf.Max(minBlend, remoteVictimPushMaxBlend);
+            return Mathf.Lerp(minBlend, maxBlend, Mathf.Clamp01(pushAssist));
         }
 
         private void UpdateVictimBlend(bool localPresentation)
@@ -605,6 +667,32 @@ namespace Sumo
             TriggerVictimSmoothing(normalized);
         }
 
+        private void TryMaintainVictimSmoothingFromActivePush(bool localPresentation)
+        {
+            if (!enableVictimPushSmoothing || collisionController == null)
+            {
+                return;
+            }
+
+            if (localPresentation && !applyVictimPushSmoothingToLocalPlayer)
+            {
+                return;
+            }
+
+            if (!localPresentation && !enableProxyExtraSmoothing)
+            {
+                return;
+            }
+
+            float pushAssist = collisionController.GetVictimPushAssist01();
+            if (pushAssist <= victimBlendResetThreshold)
+            {
+                return;
+            }
+
+            SustainVictimSmoothing(pushAssist);
+        }
+
         private void OnCollisionEnter(Collision collision)
         {
             if (!enableVictimPushSmoothing || !triggerVictimSmoothingOnPlayerCollision)
@@ -656,6 +744,25 @@ namespace Sumo
             _victimSmoothingUntil = Mathf.Max(_victimSmoothingUntil, Time.unscaledTime + duration + extension);
         }
 
+        private void SustainVictimSmoothing(float normalizedStrength)
+        {
+            float clamped = Mathf.Clamp01(normalizedStrength);
+            if (clamped <= 0f)
+            {
+                return;
+            }
+
+            _victimTargetBlend = Mathf.Max(_victimTargetBlend, Mathf.Max(victimBlendFloor, clamped));
+            _victimBlend = Mathf.Max(_victimBlend, victimBlendFloor);
+
+            float sustainWindow = Mathf.Lerp(
+                Mathf.Max(0.04f, victimSmoothingExtension),
+                Mathf.Max(victimMinSmoothingDuration, 0.12f),
+                clamped);
+
+            _victimSmoothingUntil = Mathf.Max(_victimSmoothingUntil, Time.unscaledTime + sustainWindow);
+        }
+
         private bool CanApplyLocalVictimSmoothing(bool localPresentation)
         {
             return !localPresentation
@@ -665,9 +772,7 @@ namespace Sumo
 
         private bool CanStartLocalVictimSmoothingFromNetworkSignal(bool localPresentation)
         {
-            return !localPresentation
-                || applyVictimPushSmoothingToLocalPlayer
-                || allowLocalVictimSignalSmoothing;
+            return CanStartLocalVictimSmoothing(localPresentation);
         }
 
         private bool CanExtendLocalVictimSmoothingFromCorrectionSpike(bool localPresentation)
@@ -675,6 +780,13 @@ namespace Sumo
             return !localPresentation
                 || applyVictimPushSmoothingToLocalPlayer
                 || (allowLocalVictimSignalSmoothing && IsTemporaryLocalVictimSmoothingActive());
+        }
+
+        private bool CanStartLocalVictimSmoothing(bool localPresentation)
+        {
+            return !localPresentation
+                || applyVictimPushSmoothingToLocalPlayer
+                || allowLocalVictimSignalSmoothing;
         }
 
         // Let the local player stay in direct mode by default, but keep a short
