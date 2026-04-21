@@ -1570,16 +1570,42 @@ namespace Sumo
                 && (pairState.AttackerRef == firstKey || pairState.AttackerRef == secondKey);
 
             bool existingOwnerIsFirst = pairState.AttackerRef == firstKey;
+            float tieSpeedEpsilon = GetPairTieSpeedEpsilon(first, second);
+            bool resolveTieByLowerKey = mode == SimulationMode.Authoritative
+                && GetPairResolveTieByLowerKey(first, second);
 
             SumoAttackerDecision attackerDecision = SumoImpactResolver.ResolveAttacker(
                 firstApproachSpeed,
                 secondApproachSpeed,
-                GetPairTieSpeedEpsilon(first, second),
+                tieSpeedEpsilon,
                 hasExistingOwner,
                 existingOwnerIsFirst,
-                GetPairResolveTieByLowerKey(first, second),
+                resolveTieByLowerKey,
                 firstKey,
                 secondKey);
+
+            if (mode == SimulationMode.Predicted)
+            {
+                bool firstInput = first.HasInputAuthority;
+                bool secondInput = second.HasInputAuthority;
+                if (firstInput != secondInput)
+                {
+                    SumoAttackerRole localRole = firstInput ? SumoAttackerRole.First : SumoAttackerRole.Second;
+
+                    if (!attackerDecision.HasAttacker)
+                    {
+                        attackerDecision = new SumoAttackerDecision(localRole, SumoTieResolvedBy.NeutralWithinEpsilon);
+                    }
+                    else if (attackerDecision.Role != localRole)
+                    {
+                        float speedDeltaAbs = Mathf.Abs(firstApproachSpeed - secondApproachSpeed);
+                        if (speedDeltaAbs <= tieSpeedEpsilon + 0.0001f)
+                        {
+                            attackerDecision = new SumoAttackerDecision(localRole, attackerDecision.TieResolvedBy);
+                        }
+                    }
+                }
+            }
 
             pairState.TieResolvedBy = attackerDecision.TieResolvedBy;
 
