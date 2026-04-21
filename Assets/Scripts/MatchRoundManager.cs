@@ -69,6 +69,32 @@ namespace Sumo.Gameplay
         private int _lastNotifiedWinnerRawEncoded = PlayerRef.None.RawEncoded;
         private bool _waitingForMorePlayersCountdownArmed;
 
+        public bool ServerEliminatePlayerFromBoundary(PlayerRoundState state)
+        {
+            if (!HasStateAuthority || state == null || !state.IsAliveInRound || !IsRoundRunningForBoundaryElimination())
+            {
+                return false;
+            }
+
+            PlayerRef player = ResolvePlayerRef(state);
+            if (player == PlayerRef.None || !_roundRoster.Contains(player))
+            {
+                return false;
+            }
+
+            if (!TryEliminatePlayerState(state, player))
+            {
+                return false;
+            }
+
+            if (AlivePlayersInRound <= 1)
+            {
+                EnterRoundFinished();
+            }
+
+            return true;
+        }
+
         public override void Spawned()
         {
             EnsureReferences();
@@ -336,8 +362,6 @@ namespace Sumo.Gameplay
                 return;
             }
 
-            int aliveRemaining = CountAlivePlayersInRoster();
-
             for (int i = 0; i < _roundRoster.Count; i++)
             {
                 PlayerRef player = _roundRoster[i];
@@ -356,22 +380,7 @@ namespace Sumo.Gameplay
                     continue;
                 }
 
-                Vector3 spectatorPos;
-                Quaternion spectatorRot;
-                if (preRoundBoxSpawner != null)
-                {
-                    preRoundBoxSpawner.GetSpectatorHoldPose(_eliminationOrderCounter, out spectatorPos, out spectatorRot);
-                }
-                else
-                {
-                    spectatorPos = new Vector3(0f, 14f, 0f);
-                    spectatorRot = Quaternion.identity;
-                }
-
-                _eliminationOrderCounter++;
-                state.ServerEliminateToSpectator(_eliminationOrderCounter, spectatorPos, spectatorRot);
-                aliveRemaining = Mathf.Max(0, aliveRemaining - 1);
-                RPC_NotifyPlayerEliminated(player.RawEncoded, aliveRemaining);
+                TryEliminatePlayerState(state, player);
             }
 
             AlivePlayersInRound = CountAlivePlayersInRoster();
@@ -549,6 +558,14 @@ namespace Sumo.Gameplay
             return true;
         }
 
+        private bool IsRoundRunningForBoundaryElimination()
+        {
+            return State == MatchState.DropPlayers
+                   || State == MatchState.SafeZonePhase
+                   || State == MatchState.EliminateOutsideZone
+                   || State == MatchState.NextZone;
+        }
+
         private void BuildRosterFromCurrentPlayers()
         {
             _roundRoster.Clear();
@@ -586,6 +603,37 @@ namespace Sumo.Gameplay
             return alive;
         }
 
+        private bool TryEliminatePlayerState(PlayerRoundState state, PlayerRef player)
+        {
+            if (state == null || !state.IsAliveInRound)
+            {
+                return false;
+            }
+
+            Vector3 spectatorPos;
+            Quaternion spectatorRot;
+            if (preRoundBoxSpawner != null)
+            {
+                preRoundBoxSpawner.GetSpectatorHoldPose(_eliminationOrderCounter, out spectatorPos, out spectatorRot);
+            }
+            else
+            {
+                spectatorPos = new Vector3(0f, 14f, 0f);
+                spectatorRot = Quaternion.identity;
+            }
+
+            _eliminationOrderCounter++;
+            state.ServerEliminateToSpectator(_eliminationOrderCounter, spectatorPos, spectatorRot);
+
+            AlivePlayersInRound = CountAlivePlayersInRoster();
+            if (player != PlayerRef.None)
+            {
+                RPC_NotifyPlayerEliminated(player.RawEncoded, AlivePlayersInRound);
+            }
+
+            return true;
+        }
+
         private int ResolveWinnerRawEncoded()
         {
             PlayerRef winner = PlayerRef.None;
@@ -613,6 +661,16 @@ namespace Sumo.Gameplay
             }
 
             return aliveCount == 1 ? winner.RawEncoded : PlayerRef.None.RawEncoded;
+        }
+
+        private static PlayerRef ResolvePlayerRef(PlayerRoundState state)
+        {
+            if (state == null || state.Object == null)
+            {
+                return PlayerRef.None;
+            }
+
+            return state.Object.InputAuthority;
         }
 
         private void SetAdmissionOpen(bool isOpen)
