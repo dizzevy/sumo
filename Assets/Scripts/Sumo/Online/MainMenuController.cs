@@ -7,11 +7,13 @@ namespace Sumo.Online
     {
         [SerializeField] private GameObject mainPanel;
         [SerializeField] private GameObject multiplayerPanel;
+        [SerializeField] private GameObject settingsPanel;
 
-        public void Configure(GameObject mainPanelObject, GameObject multiplayerPanelObject)
+        public void Configure(GameObject mainPanelObject, GameObject multiplayerPanelObject, GameObject settingsPanelObject)
         {
             mainPanel = mainPanelObject;
             multiplayerPanel = multiplayerPanelObject;
+            settingsPanel = settingsPanelObject;
             ShowMainPanel();
         }
 
@@ -22,7 +24,12 @@ namespace Sumo.Online
 
         public void OpenMultiplayer()
         {
-            SetPanelState(showMainPanel: false);
+            SetPanelState(MenuPanel.Multiplayer);
+        }
+
+        public void OpenSettings()
+        {
+            SetPanelState(MenuPanel.Settings);
         }
 
         public void BackToMainMenu()
@@ -37,20 +44,32 @@ namespace Sumo.Online
 
         private void ShowMainPanel()
         {
-            SetPanelState(showMainPanel: true);
+            SetPanelState(MenuPanel.Main);
         }
 
-        private void SetPanelState(bool showMainPanel)
+        private void SetPanelState(MenuPanel panel)
         {
             if (mainPanel != null)
             {
-                mainPanel.SetActive(showMainPanel);
+                mainPanel.SetActive(panel == MenuPanel.Main);
             }
 
             if (multiplayerPanel != null)
             {
-                multiplayerPanel.SetActive(!showMainPanel);
+                multiplayerPanel.SetActive(panel == MenuPanel.Multiplayer);
             }
+
+            if (settingsPanel != null)
+            {
+                settingsPanel.SetActive(panel == MenuPanel.Settings);
+            }
+        }
+
+        private enum MenuPanel
+        {
+            Main,
+            Multiplayer,
+            Settings
         }
     }
 }

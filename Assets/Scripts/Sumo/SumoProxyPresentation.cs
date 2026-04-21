@@ -618,6 +618,11 @@ namespace Sumo
             if (_lastVictimSignalSequence == int.MinValue)
             {
                 _lastVictimSignalSequence = signalSequence;
+                if (signalSequence != 0)
+                {
+                    float initialSignalStrength = collisionController.VictimPresentationSignalStrength;
+                    TriggerVictimSmoothing(initialSignalStrength);
+                }
                 return;
             }
 
@@ -674,7 +679,9 @@ namespace Sumo
                 return;
             }
 
-            if (localPresentation && !applyVictimPushSmoothingToLocalPlayer)
+            bool canSustainLocalVictimSmoothing = applyVictimPushSmoothingToLocalPlayer
+                || allowLocalVictimSignalSmoothing;
+            if (localPresentation && !canSustainLocalVictimSmoothing)
             {
                 return;
             }

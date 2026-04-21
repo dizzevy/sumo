@@ -788,13 +788,15 @@ namespace Sumo
             contactDirection.Normalize();
             bool isActiveCombatContact = pairState.State == SumoPairState.InitialImpact
                 || pairState.State == SumoPairState.Ramming;
-            bool useLocalOnlyPredictedCombatResponse = mode == SimulationMode.Predicted && isActiveCombatContact;
+            bool useLocalOnlyPredictedResponse = ShouldUseLocalOnlyPredictedContactResponse(
+                mode,
+                isActiveCombatContact);
 
             float firstResponseShare = GetActiveCombatContactResponseShare(first, pairState, mode, isActiveCombatContact);
             float secondResponseShare = GetActiveCombatContactResponseShare(second, pairState, mode, isActiveCombatContact);
 
-            float firstInvMass = GetContactInverseMass(first, mode, useLocalOnlyPredictedCombatResponse) * firstResponseShare;
-            float secondInvMass = GetContactInverseMass(second, mode, useLocalOnlyPredictedCombatResponse) * secondResponseShare;
+            float firstInvMass = GetContactInverseMass(first, mode, useLocalOnlyPredictedResponse) * firstResponseShare;
+            float secondInvMass = GetContactInverseMass(second, mode, useLocalOnlyPredictedResponse) * secondResponseShare;
 
             float invMassSum = firstInvMass + secondInvMass;
             if (invMassSum <= 0.0001f)
@@ -813,10 +815,10 @@ namespace Sumo
             float closingSpeed = Vector3.Dot(firstVelocity - secondVelocity, contactDirection);
             float closingDeadZone = isActiveCombatContact ? ActiveContactClosingDeadZone : 0f;
 
-            // During predicted combat contact we only stabilize the local body and let
-            // server authority own the two-body pressure response. This removes the
-            // speculative proxy feedback loop that was making the victim jitter.
-            if (!useLocalOnlyPredictedCombatResponse && closingSpeed > closingDeadZone)
+            // In predicted local-vs-proxy pairs we only stabilize the local body and let
+            // authority own the two-body response. This removes proxy feedback jitter on
+            // both attacker and victim screens.
+            if (!useLocalOnlyPredictedResponse && closingSpeed > closingDeadZone)
             {
                 float impulseMagnitude = (closingSpeed - closingDeadZone)
                     * Mathf.Clamp(velocityDamping, 0f, 1.25f)
@@ -879,6 +881,18 @@ namespace Sumo
             Vector3 correction = contactDirection * (correctionDistance / invMassSum);
             ApplyPositionDelta(first, -correction * firstInvMass, mode);
             ApplyPositionDelta(second, correction * secondInvMass, mode);
+        }
+
+        private static bool ShouldUseLocalOnlyPredictedContactResponse(
+            SimulationMode mode,
+            bool isActiveCombatContact)
+        {
+            if (mode != SimulationMode.Predicted)
+            {
+                return false;
+            }
+
+            return isActiveCombatContact;
         }
 
         private static float GetActiveCombatContactResponseShare(
@@ -1381,7 +1395,10 @@ namespace Sumo
 
             if (ramTick.HasForce)
             {
-                ApplyAcceleration(victim, liveDirection * ramTick.VictimAcceleration, mode);
+                if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
+                {
+                    ApplyAcceleration(victim, liveDirection * ramTick.VictimAcceleration, mode);
+                }
 
                 if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
                 {
@@ -1390,6 +1407,15 @@ namespace Sumo
             }
 
             pairState.RamEnergy = Mathf.Max(0f, pairState.RamEnergy - ramTick.EnergyDecay);
+
+            if (mode == SimulationMode.Authoritative && hasContact)
+            {
+                float presentationStrength = ComputeVictimPresentationRamStrength(attacker, pairState);
+                if (presentationStrength > 0.0001f)
+                {
+                    victim.PublishVictimPresentationImpact(presentationStrength);
+                }
+            }
 
             bool outOfEnergy = pairState.RamEnergy <= GetRamStopThreshold(attacker);
             if (ramTick.ShouldStop || outOfEnergy)
@@ -1575,6 +1601,11 @@ namespace Sumo
                 return false;
             }
 
+            if (!ShouldRunPredictedCombatForAttacker(attacker, victim, mode))
+            {
+                return false;
+            }
+
             Vector3 attackerVelocity = attacker._rigidbody.linearVelocity;
             Vector3 victimVelocity = victim._rigidbody.linearVelocity;
 
@@ -1716,6 +1747,24 @@ namespace Sumo
                 : 24f;
             float impulseStrength = Mathf.Clamp01(impactResult.VictimImpulse / impulseCap);
             return Mathf.Clamp01(Mathf.Max(speedStrength, impulseStrength));
+        }
+
+        private static float ComputeVictimPresentationRamStrength(
+            SumoCollisionController attacker,
+            in SumoRamState pairState)
+        {
+            float stopThreshold = GetRamStopThreshold(attacker);
+            if (pairState.RamEnergy <= stopThreshold)
+            {
+                return 0f;
+            }
+
+            float normalizedEnergy = pairState.InitialRamEnergy > 0.0001f
+                ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
+                : 0f;
+            float contactAssist = Mathf.Clamp01(pairState.RamContactBlend);
+            float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
+            return Mathf.Clamp01(Mathf.Lerp(0.35f, 1f, ramAssist));
         }
 
         private void PublishVictimPresentationImpact(float normalizedStrength)
@@ -1867,7 +1916,10 @@ namespace Sumo
             float victimKickImpulse = victimKickDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
             float attackerKickImpulse = attackerKickDeltaV * Mathf.Max(0.01f, attacker._rigidbody.mass);
 
-            ApplyImpulse(victim, direction * victimKickImpulse, mode);
+            if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
+            {
+                ApplyImpulse(victim, direction * victimKickImpulse, mode);
+            }
 
             if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
             {
@@ -1945,7 +1997,10 @@ namespace Sumo
             float victimDeltaVStep = pairState.InitialVictimDeltaV * segmentWeight;
             float attackerDeltaVStep = pairState.InitialAttackerDeltaV * segmentWeight;
 
-            ApplyAcceleration(victim, direction * (victimDeltaVStep / dt), mode);
+            if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
+            {
+                ApplyAcceleration(victim, direction * (victimDeltaVStep / dt), mode);
+            }
 
             if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
             {
@@ -1971,9 +2026,43 @@ namespace Sumo
             return Mathf.Lerp(legacyIntegral, frontLoadedIntegral, frontload);
         }
 
-        // Client prediction keeps the shove readable by pushing the victim side of the
-        // pair, but attacker recoil/drag on clients was the main source of attacker
-        // micro-jerks and proxy twitch. Authority still owns the real combat outcome.
+        // Predicted combat should only run on the client that owns the attacker input.
+        // Running the ram state on the victim client causes speculative push/correction
+        // fights and visible teleport loops.
+        private static bool ShouldRunPredictedCombatForAttacker(
+            SumoCollisionController attacker,
+            SumoCollisionController victim,
+            SimulationMode mode)
+        {
+            if (mode != SimulationMode.Predicted)
+            {
+                return true;
+            }
+
+            return attacker != null
+                && victim != null
+                && attacker.HasInputAuthority
+                && !victim.HasInputAuthority;
+        }
+
+        // Keep predicted shove force for the attacker's view (remote proxy victim), but
+        // avoid applying speculative victim push on the victim's local body because it
+        // fights server reconciliation and causes teleport/jitter loops.
+        private static bool ShouldApplyPredictedVictimPush(
+            SumoCollisionController attacker,
+            SumoCollisionController victim,
+            SimulationMode mode)
+        {
+            if (mode != SimulationMode.Predicted)
+            {
+                return true;
+            }
+
+            return ShouldRunPredictedCombatForAttacker(attacker, victim, mode);
+        }
+
+        // Predicted attacker recoil stays disabled so clients do not introduce extra
+        // two-body feedback jitter. Server authority still owns the final combat result.
         private static bool ShouldApplyPredictedAttackerRecoil(SumoCollisionController attacker, SimulationMode mode)
         {
             if (mode != SimulationMode.Predicted)

@@ -94,6 +94,9 @@ namespace Sumo.Online
             Button multiplayerButton = CreateButton("MultiplayerButton", mainPanel.transform, "Multiplayer", font);
             SetButtonHeight(multiplayerButton, 64f);
 
+            Button settingsButton = CreateButton("SettingsButton", mainPanel.transform, "Settings", font);
+            SetButtonHeight(settingsButton, 58f);
+
             Button quitButton = CreateButton("QuitButton", mainPanel.transform, "Quit", font);
             SetButtonHeight(quitButton, 58f);
 
@@ -113,15 +116,29 @@ namespace Sumo.Online
             Button backButton = CreateButton("BackButton", multiplayerPanel.transform, "Back", font);
             SetButtonHeight(backButton, 56f);
 
+            GameObject settingsPanel = CreatePanel("SettingsPanel", overlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.08f, 0.1f, 0.15f, 0.95f));
+            SetSize(settingsPanel, new Vector2(680f, 420f));
+            AddVerticalLayout(settingsPanel, 14, new RectOffset(36, 36, 36, 36), TextAnchor.UpperCenter);
+
+            CreateLabel("SettingsTitle", settingsPanel.transform, "Settings", font, 44, TextAnchor.MiddleCenter, Color.white);
+            Text displayModeStatusText = CreateLabel("DisplayModeStatusText", settingsPanel.transform, "Current Mode: Unknown", font, 28, TextAnchor.MiddleCenter, new Color(0.84f, 0.91f, 1f, 1f));
+
+            Button toggleDisplayModeButton = CreateButton("ToggleDisplayModeButton", settingsPanel.transform, "Switch Mode", font);
+            SetButtonHeight(toggleDisplayModeButton, 60f);
+
+            Button settingsBackButton = CreateButton("SettingsBackButton", settingsPanel.transform, "Back", font);
+            SetButtonHeight(settingsBackButton, 56f);
+
             MainMenuController mainMenuController = gameObject.AddComponent<MainMenuController>();
             ClientFusionConnector connector = gameObject.AddComponent<ClientFusionConnector>();
             MatchmakingClient matchmakingClient = gameObject.AddComponent<MatchmakingClient>();
             MultiplayerMenuController multiplayerMenuController = gameObject.AddComponent<MultiplayerMenuController>();
+            SettingsMenuController settingsMenuController = gameObject.AddComponent<SettingsMenuController>();
 
             BootstrapConfig bootstrapConfig = Resources.Load<BootstrapConfig>("BootstrapConfig");
 
             matchmakingClient.Configure(bootstrapConfig, connector, false);
-            mainMenuController.Configure(mainPanel, multiplayerPanel);
+            mainMenuController.Configure(mainPanel, multiplayerPanel, settingsPanel);
             multiplayerMenuController.Configure(
                 matchmakingClient,
                 mainMenuController,
@@ -130,8 +147,14 @@ namespace Sumo.Online
                 backButton,
                 statusText,
                 canvas);
+            settingsMenuController.Configure(
+                mainMenuController,
+                toggleDisplayModeButton,
+                settingsBackButton,
+                displayModeStatusText);
 
             multiplayerButton.onClick.AddListener(mainMenuController.OpenMultiplayer);
+            settingsButton.onClick.AddListener(mainMenuController.OpenSettings);
             quitButton.onClick.AddListener(mainMenuController.QuitGame);
         }
 
@@ -284,6 +307,146 @@ namespace Sumo.Online
             if (rect != null)
             {
                 rect.sizeDelta = size;
+            }
+        }
+    }
+
+    [DisallowMultipleComponent]
+    public sealed class SettingsMenuController : MonoBehaviour
+    {
+        [SerializeField] private MainMenuController mainMenuController;
+        [SerializeField] private Button toggleDisplayModeButton;
+        [SerializeField] private Button backButton;
+        [SerializeField] private Text displayModeStatusText;
+
+        private bool _listenersBound;
+
+        public void Configure(
+            MainMenuController mainMenuControllerReference,
+            Button toggleDisplayModeButtonReference,
+            Button backButtonReference,
+            Text displayModeStatusTextReference)
+        {
+            UnbindButtonListeners();
+
+            mainMenuController = mainMenuControllerReference;
+            toggleDisplayModeButton = toggleDisplayModeButtonReference;
+            backButton = backButtonReference;
+            displayModeStatusText = displayModeStatusTextReference;
+
+            BindButtonListeners();
+            RefreshDisplayModeUi();
+        }
+
+        private void Awake()
+        {
+            BindButtonListeners();
+        }
+
+        private void OnEnable()
+        {
+            RefreshDisplayModeUi();
+        }
+
+        private void OnDestroy()
+        {
+            UnbindButtonListeners();
+        }
+
+        private void OnToggleDisplayModePressed()
+        {
+            bool isWindowed = Screen.fullScreenMode == FullScreenMode.Windowed || !Screen.fullScreen;
+            ApplyDisplayMode(useFullscreen: isWindowed);
+        }
+
+        private void OnBackPressed()
+        {
+            if (mainMenuController != null)
+            {
+                mainMenuController.BackToMainMenu();
+            }
+        }
+
+        private void ApplyDisplayMode(bool useFullscreen)
+        {
+            if (useFullscreen)
+            {
+                Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+                Screen.fullScreen = true;
+            }
+            else
+            {
+                Screen.fullScreenMode = FullScreenMode.Windowed;
+                Screen.fullScreen = false;
+            }
+
+            RefreshDisplayModeUi();
+        }
+
+        private void RefreshDisplayModeUi()
+        {
+            bool isWindowed = Screen.fullScreenMode == FullScreenMode.Windowed || !Screen.fullScreen;
+            string currentModeLabel = isWindowed ? "Windowed" : "Fullscreen";
+
+            if (displayModeStatusText != null)
+            {
+                displayModeStatusText.text = $"Current Mode: {currentModeLabel}";
+            }
+
+            SetButtonCaption(toggleDisplayModeButton, isWindowed ? "Switch To Fullscreen" : "Switch To Windowed");
+        }
+
+        private void BindButtonListeners()
+        {
+            if (_listenersBound)
+            {
+                return;
+            }
+
+            if (toggleDisplayModeButton != null)
+            {
+                toggleDisplayModeButton.onClick.AddListener(OnToggleDisplayModePressed);
+            }
+
+            if (backButton != null)
+            {
+                backButton.onClick.AddListener(OnBackPressed);
+            }
+
+            _listenersBound = true;
+        }
+
+        private void UnbindButtonListeners()
+        {
+            if (!_listenersBound)
+            {
+                return;
+            }
+
+            if (toggleDisplayModeButton != null)
+            {
+                toggleDisplayModeButton.onClick.RemoveListener(OnToggleDisplayModePressed);
+            }
+
+            if (backButton != null)
+            {
+                backButton.onClick.RemoveListener(OnBackPressed);
+            }
+
+            _listenersBound = false;
+        }
+
+        private static void SetButtonCaption(Button button, string caption)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            Text label = button.GetComponentInChildren<Text>();
+            if (label != null)
+            {
+                label.text = caption;
             }
         }
     }
