@@ -13,6 +13,8 @@ namespace Sumo.Online
     [DisallowMultipleComponent]
     public sealed class DedicatedServerBootstrap : MonoBehaviour
     {
+        private const int HardMaxPlayers = BootstrapConfig.TargetMaxPlayers;
+
         [Header("References")]
         [SerializeField] private BootstrapConfig bootstrapConfig;
         [SerializeField] private NetworkPrefabRef playerPrefab;
@@ -135,9 +137,13 @@ namespace Sumo.Online
             string fallbackMatchId = bootstrapConfig != null ? bootstrapConfig.MockMatchId : "match_001";
             string fallbackRegion = "auto";
             string fallbackScene = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1";
-            int fallbackMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : 8;
+            int fallbackMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : HardMaxPlayers;
             int fallbackMinPlayers = bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2;
             ushort fallbackPort = bootstrapConfig != null ? bootstrapConfig.DefaultServerPort : (ushort)27015;
+            int requestedMaxPlayers = GetIntArgValue("maxPlayers", fallbackMaxPlayers).GetValueOrDefault(fallbackMaxPlayers);
+
+            // Dedicated server currently runs at a fixed 10-player cap.
+            int resolvedMaxPlayers = Mathf.Clamp(Mathf.Max(HardMaxPlayers, requestedMaxPlayers), 2, HardMaxPlayers);
 
             LaunchParameters launch = new LaunchParameters
             {
@@ -146,8 +152,11 @@ namespace Sumo.Online
                 Region = GetArgValue("region", fallbackRegion),
                 SceneName = GetArgValue("scene", fallbackScene),
                 SceneIndex = GetIntArgValue("sceneIndex", null),
-                MaxPlayers = Mathf.Max(2, GetIntArgValue("maxPlayers", fallbackMaxPlayers).GetValueOrDefault(fallbackMaxPlayers)),
-                MinimumPlayers = Mathf.Max(2, GetIntArgValue("minPlayers", fallbackMinPlayers).GetValueOrDefault(fallbackMinPlayers)),
+                MaxPlayers = resolvedMaxPlayers,
+                MinimumPlayers = Mathf.Clamp(
+                    GetIntArgValue("minPlayers", fallbackMinPlayers).GetValueOrDefault(fallbackMinPlayers),
+                    2,
+                    resolvedMaxPlayers),
                 Port = (ushort)Mathf.Clamp(GetIntArgValue("port", fallbackPort).GetValueOrDefault(fallbackPort), 0, ushort.MaxValue)
             };
 

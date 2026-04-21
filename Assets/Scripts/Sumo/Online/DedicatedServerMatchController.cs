@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Fusion;
 using Fusion.Sockets;
+using Sumo.Gameplay;
 using UnityEngine;
 
 namespace Sumo.Online
@@ -12,6 +13,7 @@ namespace Sumo.Online
     {
         [SerializeField] private NetworkRunner runner;
         [SerializeField] private NetworkPrefabRef playerPrefab;
+        [SerializeField] private MatchRoundManager roundManager;
 
         [Header("Match")]
         [SerializeField] private int minimumPlayersToStart = 2;
@@ -71,6 +73,12 @@ namespace Sumo.Online
         {
             if (!runnerInstance.IsServer)
             {
+                return;
+            }
+
+            if (!CanAcceptNewPlayers(runnerInstance))
+            {
+                runnerInstance.Disconnect(player, null);
                 return;
             }
 
@@ -162,7 +170,14 @@ namespace Sumo.Online
         {
             if (runnerInstance.IsServer)
             {
-                request.Accept();
+                if (CanAcceptNewPlayers(runnerInstance))
+                {
+                    request.Accept();
+                }
+                else
+                {
+                    request.Refuse();
+                }
             }
         }
 
@@ -203,6 +218,7 @@ namespace Sumo.Online
 
             _sceneReady = true;
             RefreshSpawnPoints();
+            ResolveRoundManagerIfNeeded();
             Debug.Log($"DedicatedServerMatchController: scene loaded. SpawnPoints={_spawnPoints.Count}.");
             TryStartMatch(runnerInstance);
             SpawnPendingPlayersIfPossible(runnerInstance);
@@ -230,6 +246,21 @@ namespace Sumo.Online
         {
             if (!_sceneReady)
             {
+                return;
+            }
+
+            if (!CanAcceptNewPlayers(runnerInstance))
+            {
+                if (_pendingPlayers.Count > 0)
+                {
+                    List<PlayerRef> pending = new List<PlayerRef>(_pendingPlayers);
+                    _pendingPlayers.Clear();
+                    for (int i = 0; i < pending.Count; i++)
+                    {
+                        runnerInstance.Disconnect(pending[i], null);
+                    }
+                }
+
                 return;
             }
 
@@ -463,6 +494,31 @@ namespace Sumo.Online
         {
             minimumPlayersToStart = Mathf.Max(2, minimumPlayersToStart);
             fallbackSpawnRadius = Mathf.Max(0f, fallbackSpawnRadius);
+        }
+
+        private bool CanAcceptNewPlayers(NetworkRunner runnerInstance)
+        {
+            if (runnerInstance == null || !runnerInstance.IsServer)
+            {
+                return false;
+            }
+
+            ResolveRoundManagerIfNeeded();
+
+            if (roundManager == null)
+            {
+                return true;
+            }
+
+            return roundManager.IsAcceptingPlayers;
+        }
+
+        private void ResolveRoundManagerIfNeeded()
+        {
+            if (roundManager == null)
+            {
+                roundManager = FindObjectOfType<MatchRoundManager>(true);
+            }
         }
     }
 }

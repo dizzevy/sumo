@@ -17,7 +17,7 @@ namespace Sumo.Online
             public string GameMode = "sumo";
             public string DefaultSceneName = "Location1";
             public string DefaultRegion = "auto";
-            public int DefaultMaxPlayers = 8;
+            public int DefaultMaxPlayers = BootstrapConfig.TargetMaxPlayers;
             public float PollIntervalSeconds = 1f;
             public string AuthToken;
         }
@@ -36,10 +36,7 @@ namespace Sumo.Online
                 throw new ArgumentException("Production matchmaking requires a backend BaseUrl.", nameof(settings));
             }
 
-            if (_settings.DefaultMaxPlayers < 2)
-            {
-                _settings.DefaultMaxPlayers = 2;
-            }
+            _settings.DefaultMaxPlayers = Mathf.Clamp(_settings.DefaultMaxPlayers, 2, BootstrapConfig.TargetMaxPlayers);
 
             _pollInterval = TimeSpan.FromSeconds(Mathf.Max(0.2f, _settings.PollIntervalSeconds));
 
@@ -187,7 +184,10 @@ namespace Sumo.Online
                     SessionName = serverResponse.sessionName,
                     Region = string.IsNullOrWhiteSpace(serverResponse.region) ? _settings.DefaultRegion : serverResponse.region,
                     SceneName = string.IsNullOrWhiteSpace(serverResponse.sceneName) ? _settings.DefaultSceneName : serverResponse.sceneName,
-                    MaxPlayers = serverResponse.maxPlayers > 0 ? serverResponse.maxPlayers : _settings.DefaultMaxPlayers,
+                    MaxPlayers = Mathf.Clamp(
+                        serverResponse.maxPlayers > 0 ? serverResponse.maxPlayers : _settings.DefaultMaxPlayers,
+                        2,
+                        BootstrapConfig.TargetMaxPlayers),
                     Address = string.IsNullOrWhiteSpace(serverResponse.address) ? null : serverResponse.address,
                     Port = serverResponse.port > 0 ? serverResponse.port : null,
                     AuthToken = string.IsNullOrWhiteSpace(serverResponse.authToken) ? null : serverResponse.authToken

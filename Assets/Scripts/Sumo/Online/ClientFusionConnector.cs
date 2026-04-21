@@ -42,7 +42,10 @@ namespace Sumo.Online
             {
                 GameMode = GameMode.Client,
                 SessionName = connectionInfo.SessionName,
-                PlayerCount = Mathf.Max(2, connectionInfo.MaxPlayers),
+                PlayerCount = Mathf.Clamp(
+                    connectionInfo.MaxPlayers > 0 ? connectionInfo.MaxPlayers : BootstrapConfig.TargetMaxPlayers,
+                    2,
+                    BootstrapConfig.TargetMaxPlayers),
                 SceneManager = sceneManager,
                 EnableClientSessionCreation = false,
                 StartGameCancellationToken = token

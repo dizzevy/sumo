@@ -110,6 +110,8 @@ GameObject:
   - component: {fileID: -518773992144556677}
   - component: {fileID: -451421529677693719}
   - component: {fileID: 8956079541103320987}
+  - component: {fileID: 28822364788379151}
+  - component: {fileID: 254724138945510259}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -127,7 +129,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 2, y: 2, z: 2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1428568767963707644}
@@ -176,6 +178,8 @@ MonoBehaviour:
   - {fileID: -518773992144556677}
   - {fileID: -451421529677693719}
   - {fileID: 8956079541103320987}
+  - {fileID: 28822364788379151}
+  - {fileID: 254724138945510259}
   ForceRemoteRenderTimeframe: 0
 --- !u!54 &-4605785503722955420
 Rigidbody:
@@ -252,7 +256,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   visualTarget: {fileID: 1428568767963707644}
-  forceClientSimulationForRemotePlayers: 1
+  forceClientSimulationForRemotePlayers: 0
   mass: 1
   drag: 0.25
   angularDrag: 0.1
@@ -274,13 +278,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5c42b14fbf5946e9a06b9a65bfbac113, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoAccelerationConfig
-  minMoveSpeed: 4.5
-  maxSpeed: 42
-  initialAccelerationResponse: 32
+  minMoveSpeed: 2.25
+  maxSpeed: 21
+  initialAccelerationResponse: 16
   accelerationPower: 2.2
   topSpeedApproachStrength: 1.85
   steeringResponsiveness: 9
-  braking: 22
+  braking: 11
   hardBrakeMultiplier: 1.8
   rollingDrag: 1.2
 --- !u!114 &517348290112233445
@@ -307,133 +311,54 @@ MonoBehaviour:
   physicsMaterial: {fileID: 13400000, guid: 589ee13a1522cfa40a5797519fc17546, type: 2}
   forceNonTriggerCollider: 1
   colliderContactOffset: 0.015
-  minPushSpeed: 2.2
-  mediumPushSpeed: 4.8
-  highPushSpeed: 7.4
-  maxEffectivePushSpeed: 10
-  basePushImpulse: 24
-  maxPushImpulse: 40
-  pushCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.2
-      value: 0.02
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.45
-      value: 0.12
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.7
-      value: 0.45
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.88
-      value: 0.86
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  lowSpeedPenaltyMultiplier: 0.15
-  headOnMultiplier: 2.1
-  glancingHitMultiplier: 0.35
+  minImpactSpeed: 2.2
+  maxImpactSpeed: 10
+  baseImpactImpulse: 24
+  maxImpactImpulse: 40
+  impactSpeedExponent: 1.65
+  impactTopSpeedBonus: 1.35
+  impactAngleExponent: 1.05
+  headOnImpactMultiplier: 2.1
+  glancingImpactMultiplier: 0.35
   relativeClosingBonus: 0.2
-  dashImpactMultiplier: 1.45
-  stayHitImpulseScale: 0.35
-  verticalImpulseMultiplier: 0.02
-  repeatedHitCooldownTicks: 1
-  attackerTieSpeedEpsilon: 0.15
-  resolveTieByLowerKey: 1
-  contactBreakGraceTicks: 2
-  ramReopenCooldownTicks: 1
-  collisionResponseMode: 0
-  reengageBreakTicks: 1
-  reengageDistance: 0.05
-  reengageSpeedThreshold: 4.8
-  initialImpactAngleExponent: 1.05
-  initialImpactVictimImpulseScale: 1
-  initialImpactAttackerRecoilScale: 0.16
-  initialImpactSpeedExponent: 1.65
-  initialImpactTopSpeedBonus: 1.35
-  initialImpactGlobalScale: 0.34
-  initialImpactHighSpeedFloorScale: 0.55
+  highSpeedReadableFloor: 0.55
   firstImpactArcadeThreshold01: 0.32
   firstImpactArcadeBoost: 4.2
   firstImpactArcadeCapBoost: 3.1
-  impactBurstDuration: 0.06
-  firstImpactBurstFrontload: 0.88
-  firstImpactKickImpulseShare: 0.72
-  initialImpactImpulseClamp: 0
+  impactAttackerRecoilScale: 0.16
+  impactVerticalLift: 0.02
+  dashImpactMultiplier: 1.45
+  impactBurstDuration: 0.08
+  firstImpactBurstFrontload: 0.62
+  firstImpactKickImpulseShare: 0.48
+  attackerTieSpeedEpsilon: 0.15
+  resolveTieByLowerKey: 1
+  contactBreakGraceTicks: 5
   minRamStartSpeed: 3.3
   minRamPressureSpeed: 1.6
-  maxRamDurationTicks: 42
-  ramBaseImpulsePerSecond: 7
-  ramMaxImpulsePerTick: 0.3
-  ramVictimImpulseScale: 0.58
-  ramAttackerRecoilScale: 0.22
-  ramGlancingImpulseScale: 0.35
+  maxRamDurationTicks: 34
+  ramBaseAcceleration: 7
+  ramMaxAcceleration: 7
+  ramAttackerDragScale: 0.22
+  ramGlancingForceScale: 0.35
   ramMinDirectionDot: 0.15
-  ramNoPressureGraceTicks: 3
-  ramBudgetFromImpactScale: 0.2
-  ramBudgetFromSpeedScale: 1.35
-  ramBudgetDashBonusScale: 0.5
-  ramBudgetGlancingScale: 0.55
-  minRamBudget: 0.45
-  maxRamBudget: 7.2
-  ramLowBudgetImpulseScale: 0.18
-  maxRamForceScale: 1.08
-  ramWeakThreshold: 0.4
+  ramEnergyFromImpact: 0.2
+  ramEnergyFromSpeed: 1.35
+  ramEnergyFromDash: 0.5
+  ramMinEnergy: 0.45
+  ramMaxEnergy: 7.2
+  ramMinForceScale: 0.18
+  ramMaxForceScale: 1.1
+  ramForceExponent: 0.7
   ramBaseDecayPerSecond: 1.3
   ramPressureDecayPerSecond: 1
-  ramPoorAngleDecayPerSecond: 1.4
-  ramResistanceDecayPerSecond: 0.9
+  ramAngleDecayPerSecond: 1.4
   ramNoPressureDecayPerSecond: 4
-  ramBudgetCostPerImpulse: 0.75
-  ramStopBudgetThreshold: 0.08
-  weakPushImpulsePerSecond: 0.08
-  weakPushMaxImpulsePerTick: 0.01
-  weakPushAttackerDragScale: 1
-  weakPushMinDirectionDot: 0.1
-  maxPostRamWeakPushTicks: 6
+  ramAccelerationEnergyCost: 0.75
+  ramStopEnergyThreshold: 0.08
+  reengageBreakTicks: 4
+  reengageDistance: 0.18
+  reengageSpeedThreshold: 4.8
   limitAccelerationIntoPlayers: 1
   antiBulldozeSpeedThreshold: 3.8
   intoPlayerAccelerationScale: 0.12
@@ -476,8 +401,12 @@ MonoBehaviour:
   playerMask:
     serializedVersion: 2
     m_Bits: 4294967295
+  disableNativePlayerCollision: 1
+  enableClientPredictedImpact: 1
+  enableClientPredictedRam: 1
+  applyPredictedForcesToRemoteProxies: 1
   logImpacts: 0
-  logRamLifecycle: 0
+  logStateMachine: 0
 --- !u!114 &-451421529677693719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -521,3 +450,63 @@ MonoBehaviour:
   useBallVisualTargetForCamera: 1
   cameraPrefab: {fileID: 0}
   disableSceneMainCamera: 1
+--- !u!114 &28822364788379151
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 03eb84e6b82e67e43a82391f4338e1ea, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.Gameplay.PlayerRoundState
+  ballController: {fileID: 2228017649297123496}
+  collisionController: {fileID: -518773992144556677}
+  playerInput: {fileID: -451421529677693719}
+  cameraFollow: {fileID: 0}
+  body: {fileID: -4605785503722955420}
+  gameplayColliders:
+  - {fileID: 4093002765778370635}
+  enableDeathVfx: 1
+  deathVfxShardCount: 24
+  deathVfxLifetime: 2.2
+  deathVfxSpawnYOffset: 0.1
+  _IsClientReady:
+    _value: 0
+  _IsAlive:
+    _value: 0
+  _IsSpectator:
+    _value: 0
+  _LastRoundIndex: 0
+  _EliminationOrder: 0
+--- !u!114 &254724138945510259
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f1df8930ce7ee7e4da5327fa2928c59e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.Gameplay.SpectatorController
+  roundState: {fileID: 28822364788379151}
+  gameplayCameraFollow: {fileID: 0}
+  gameplayLegacyCamera: {fileID: 8956079541103320987}
+  spectatorCameraPrefab: {fileID: 0}
+  followDistance: 10
+  followHeight: 4
+  followSmoothing: 8
+  lookOffsetHeight: 1.1
+  fallbackOrbitRadius: 7
+  disableSceneMainCamera: 1
+  mouseDegreesPerPixel: 0.085
+  legacyMouseDegreesPerFrame: 8
+  gamepadLookSpeed: 220
+  keyboardLookSpeed: 120
+  minPitch: -65
+  maxPitch: 75
+  targetRefreshInterval: 0.35

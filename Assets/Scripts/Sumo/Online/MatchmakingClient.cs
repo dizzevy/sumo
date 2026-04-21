@@ -246,7 +246,7 @@ namespace Sumo.Online
                     MatchId = bootstrapConfig != null ? bootstrapConfig.MockMatchId : "match_001",
                     Region = bootstrapConfig != null ? bootstrapConfig.MockRegion : "local",
                     SceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1",
-                    MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : 8,
+                    MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
                     SearchDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockSearchDelaySeconds : 0.8f,
                     WaitForPlayersDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockWaitForPlayersDelaySeconds : 2f,
                     ServerBootDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockServerBootDelaySeconds : 1.5f
@@ -262,7 +262,7 @@ namespace Sumo.Online
                 GameMode = "sumo",
                 DefaultSceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1",
                 DefaultRegion = "auto",
-                DefaultMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : 8,
+                DefaultMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
                 PollIntervalSeconds = bootstrapConfig != null ? bootstrapConfig.ProductionPollIntervalSeconds : 1f,
                 AuthToken = null
             };

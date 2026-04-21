@@ -15,7 +15,7 @@ namespace Sumo.Online
             public string MatchId = "match_001";
             public string Region = "local";
             public string SceneName = "Location1";
-            public int MaxPlayers = 8;
+            public int MaxPlayers = BootstrapConfig.TargetMaxPlayers;
             public float SearchDelaySeconds = 0.8f;
             public float WaitForPlayersDelaySeconds = 2.0f;
             public float ServerBootDelaySeconds = 1.5f;
@@ -93,7 +93,7 @@ namespace Sumo.Online
                 SessionName = _settings.SessionName,
                 Region = _settings.Region,
                 SceneName = _settings.SceneName,
-                MaxPlayers = Mathf.Max(2, _settings.MaxPlayers),
+                MaxPlayers = Mathf.Clamp(_settings.MaxPlayers, 2, BootstrapConfig.TargetMaxPlayers),
                 Address = null,
                 Port = null,
                 AuthToken = null

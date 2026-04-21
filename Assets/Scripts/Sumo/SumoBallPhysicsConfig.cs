@@ -53,14 +53,19 @@ namespace Sumo
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
         [SerializeField] private float dashImpactMultiplier = 1.4f;
-        [SerializeField] private float impactBurstDuration = 0.075f;
-        [SerializeField] private float firstImpactBurstFrontload = 0.88f;
-        [SerializeField] private float firstImpactKickImpulseShare = 0.72f;
+        [SerializeField] private float impactBurstDuration = 0.09f;
+        [SerializeField] private float firstImpactBurstFrontload = 0.62f;
+        [SerializeField] private float firstImpactKickImpulseShare = 0.48f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
         [SerializeField] private bool resolveTieByLowerKey = true;
-        [SerializeField] private int contactBreakGraceTicks = 1;
+        [SerializeField] private int contactBreakGraceTicks = 6;
+        [SerializeField] private float playerContactEnterPadding = 0.03f;
+        [SerializeField] private float playerContactExitPadding = 0.12f;
+        [SerializeField] private float playerContactPenetrationSlop = 0.01f;
+        [SerializeField] private float playerContactPositionCorrection = 0.85f;
+        [SerializeField] private float playerContactVelocityDamping = 1f;
 
         [Header("Ramming")]
         [SerializeField] private float minRamStartSpeed = 2.4f;
@@ -100,8 +105,8 @@ namespace Sumo
         [SerializeField] private float ramStopEnergyThreshold = 0.08f;
 
         [Header("Re-Engage Gate")]
-        [SerializeField] private int reengageBreakTicks = 3;
-        [SerializeField] private float reengageDistance = 0.12f;
+        [SerializeField] private int reengageBreakTicks = 6;
+        [SerializeField] private float reengageDistance = 0.22f;
         [SerializeField] private float reengageSpeedThreshold = 4.8f;
 
         [Header("Anti-Bulldoze")]
@@ -145,6 +150,11 @@ namespace Sumo
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
+        public float PlayerContactEnterPadding => playerContactEnterPadding;
+        public float PlayerContactExitPadding => playerContactExitPadding;
+        public float PlayerContactPenetrationSlop => playerContactPenetrationSlop;
+        public float PlayerContactPositionCorrection => playerContactPositionCorrection;
+        public float PlayerContactVelocityDamping => playerContactVelocityDamping;
 
         public float MinRamStartSpeed => minRamStartSpeed;
         public float MinRamPressureSpeed => minRamPressureSpeed;
@@ -252,7 +262,12 @@ namespace Sumo
             firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
-            contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 1, 2);
+            contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);
+            playerContactEnterPadding = Mathf.Clamp(playerContactEnterPadding, 0f, 0.25f);
+            playerContactExitPadding = Mathf.Clamp(playerContactExitPadding, playerContactEnterPadding, 0.4f);
+            playerContactPenetrationSlop = Mathf.Clamp(playerContactPenetrationSlop, 0f, 0.12f);
+            playerContactPositionCorrection = Mathf.Clamp(playerContactPositionCorrection, 0f, 1f);
+            playerContactVelocityDamping = Mathf.Clamp(playerContactVelocityDamping, 0f, 1.25f);
 
             minRamStartSpeed = Mathf.Clamp(minRamStartSpeed, minImpactSpeed, maxImpactSpeed);
             minRamPressureSpeed = Mathf.Max(0f, minRamPressureSpeed);
@@ -277,8 +292,8 @@ namespace Sumo
             ramAccelerationEnergyCost = Mathf.Max(0f, ramAccelerationEnergyCost);
             ramStopEnergyThreshold = Mathf.Max(0f, ramStopEnergyThreshold);
 
-            reengageBreakTicks = Mathf.Max(1, reengageBreakTicks);
-            reengageDistance = Mathf.Max(0f, reengageDistance);
+            reengageBreakTicks = Mathf.Clamp(reengageBreakTicks, 4, 16);
+            reengageDistance = Mathf.Clamp(reengageDistance, 0.16f, 0.4f);
             reengageSpeedThreshold = Mathf.Max(0f, reengageSpeedThreshold);
 
             antiBulldozeSpeedThreshold = Mathf.Max(0f, antiBulldozeSpeedThreshold);

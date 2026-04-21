@@ -5,9 +5,11 @@ namespace Sumo.Online
     [CreateAssetMenu(fileName = "BootstrapConfig", menuName = "Sumo/Bootstrap Config")]
     public sealed class BootstrapConfig : ScriptableObject
     {
+        public const int TargetMaxPlayers = 10;
+
         [Header("Match Defaults")]
         [SerializeField] private string defaultSceneName = "Location1";
-        [SerializeField] private int defaultMaxPlayers = 8;
+        [SerializeField] private int defaultMaxPlayers = TargetMaxPlayers;
         [SerializeField] private int minimumPlayersToStart = 2;
         [SerializeField] private ushort defaultServerPort = 27015;
 
@@ -26,8 +28,8 @@ namespace Sumo.Online
         [SerializeField] private string playerIdPrefix = "player";
 
         public string DefaultSceneName => defaultSceneName;
-        public int DefaultMaxPlayers => Mathf.Max(2, defaultMaxPlayers);
-        public int MinimumPlayersToStart => Mathf.Max(2, minimumPlayersToStart);
+        public int DefaultMaxPlayers => Mathf.Clamp(defaultMaxPlayers, 2, TargetMaxPlayers);
+        public int MinimumPlayersToStart => Mathf.Clamp(minimumPlayersToStart, 2, TargetMaxPlayers);
         public ushort DefaultServerPort => defaultServerPort;
 
         public bool UseMockMatchmakingInEditor => useMockMatchmakingInEditor;
@@ -41,5 +43,11 @@ namespace Sumo.Online
         public string ProductionBackendBaseUrl => productionBackendBaseUrl;
         public float ProductionPollIntervalSeconds => Mathf.Max(0.2f, productionPollIntervalSeconds);
         public string PlayerIdPrefix => string.IsNullOrWhiteSpace(playerIdPrefix) ? "player" : playerIdPrefix;
+
+        private void OnValidate()
+        {
+            defaultMaxPlayers = Mathf.Clamp(defaultMaxPlayers, 2, TargetMaxPlayers);
+            minimumPlayersToStart = Mathf.Clamp(minimumPlayersToStart, 2, TargetMaxPlayers);
+        }
     }
 }

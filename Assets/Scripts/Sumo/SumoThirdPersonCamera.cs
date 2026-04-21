@@ -26,200 +26,46 @@ namespace Sumo
         [SerializeField] private Camera cameraPrefab;
         [SerializeField] private bool disableSceneMainCamera = true;
 
-        private SumoPlayerInput _input;
-        private Camera _cameraInstance;
-        private AudioListener _audioListener;
-        private Transform _resolvedFollowTarget;
-        private bool _ownsCameraInstance;
-        private bool _cameraInitialized;
+        private SumoCameraFollow _cameraFollow;
 
         public override void Spawned()
         {
-            _input = GetComponent<SumoPlayerInput>();
-
-            if (!HasInputAuthority)
-            {
-                DisableProxyCameraComponents();
-                enabled = false;
-                return;
-            }
-
-            if (_input != null)
-            {
-                _input.ConfigureLook(sensitivity, minPitch, maxPitch);
-            }
-
-            ResolveFollowTarget();
-
-            CreateOrReuseLocalCamera();
-
-            if (disableSceneMainCamera)
-            {
-                DisableSceneCameraIfNeeded();
-            }
-        }
-
-        public override void Despawned(NetworkRunner runner, bool hasState)
-        {
-            if (_ownsCameraInstance && _cameraInstance != null)
-            {
-                Destroy(_cameraInstance.gameObject);
-            }
-
-            _cameraInstance = null;
-            _audioListener = null;
-            _cameraInitialized = false;
-            _ownsCameraInstance = false;
-        }
-
-        private void LateUpdate()
-        {
-            if (!HasInputAuthority || _cameraInstance == null)
+            EnsureBridge();
+            if (_cameraFollow == null)
             {
                 return;
             }
 
-            if (_resolvedFollowTarget == null)
-            {
-                ResolveFollowTarget();
-            }
-
-            float yaw = _input != null ? _input.CameraYaw : transform.eulerAngles.y;
-            float pitch = _input != null ? _input.CameraPitch : 15f;
-
-            Vector3 followPosition = _resolvedFollowTarget != null ? _resolvedFollowTarget.position : transform.position;
-            Vector3 pivot = followPosition + Vector3.up * height;
-            Quaternion targetRotation = Quaternion.Euler(pitch, yaw, 0f);
-
-            Vector3 desiredPosition = pivot - targetRotation * Vector3.forward * distance;
-            desiredPosition = ResolveCameraCollision(pivot, desiredPosition);
-
-            if (!_cameraInitialized)
-            {
-                _cameraInstance.transform.SetPositionAndRotation(desiredPosition, targetRotation);
-                _cameraInitialized = true;
-                return;
-            }
-
-            float blend = 1f - Mathf.Exp(-Mathf.Max(0.01f, smoothing) * Time.unscaledDeltaTime);
-            Transform cameraTransform = _cameraInstance.transform;
-            cameraTransform.position = Vector3.Lerp(cameraTransform.position, desiredPosition, blend);
-            cameraTransform.rotation = Quaternion.Slerp(cameraTransform.rotation, targetRotation, blend);
+            _cameraFollow.ApplyLegacySettings(
+                distance,
+                height,
+                sensitivity,
+                minPitch,
+                maxPitch,
+                smoothing,
+                obstructionMask,
+                obstructionRadius,
+                obstructionPadding,
+                followTarget,
+                useBallVisualTargetForCamera,
+                cameraPrefab,
+                disableSceneMainCamera);
+            _cameraFollow.enabled = true;
+            enabled = false;
         }
 
-        private void CreateOrReuseLocalCamera()
+        private void EnsureBridge()
         {
-            Camera childCamera = GetComponentInChildren<Camera>(true);
-            if (childCamera != null)
-            {
-                _cameraInstance = childCamera;
-                _audioListener = childCamera.GetComponent<AudioListener>();
-                _ownsCameraInstance = false;
-            }
-            else if (cameraPrefab != null)
-            {
-                _cameraInstance = Instantiate(cameraPrefab);
-                _audioListener = _cameraInstance.GetComponent<AudioListener>();
-                _ownsCameraInstance = true;
-            }
-            else
-            {
-                GameObject cameraObject = new GameObject("SumoLocalCamera");
-                _cameraInstance = cameraObject.AddComponent<Camera>();
-                _audioListener = cameraObject.AddComponent<AudioListener>();
-                _ownsCameraInstance = true;
-            }
-
-            _cameraInstance.enabled = true;
-            _cameraInstance.tag = "MainCamera";
-
-            if (_audioListener == null)
-            {
-                _audioListener = _cameraInstance.gameObject.AddComponent<AudioListener>();
-            }
-
-            _audioListener.enabled = true;
-            _cameraInitialized = false;
-        }
-
-        private void DisableProxyCameraComponents()
-        {
-            Camera[] cameras = GetComponentsInChildren<Camera>(true);
-            for (int i = 0; i < cameras.Length; i++)
-            {
-                cameras[i].enabled = false;
-            }
-
-            AudioListener[] listeners = GetComponentsInChildren<AudioListener>(true);
-            for (int i = 0; i < listeners.Length; i++)
-            {
-                listeners[i].enabled = false;
-            }
-        }
-
-        private void DisableSceneCameraIfNeeded()
-        {
-            Camera mainCamera = Camera.main;
-            if (mainCamera == null || mainCamera == _cameraInstance)
+            if (_cameraFollow != null)
             {
                 return;
             }
 
-            mainCamera.enabled = false;
-
-            AudioListener listener = mainCamera.GetComponent<AudioListener>();
-            if (listener != null)
+            _cameraFollow = GetComponent<SumoCameraFollow>();
+            if (_cameraFollow == null)
             {
-                listener.enabled = false;
+                _cameraFollow = gameObject.AddComponent<SumoCameraFollow>();
             }
-        }
-
-        private void ResolveFollowTarget()
-        {
-            if (followTarget != null)
-            {
-                _resolvedFollowTarget = followTarget;
-                return;
-            }
-
-            if (useBallVisualTargetForCamera && TryGetComponent(out SumoBallController ballController))
-            {
-                Transform ballTarget = ballController.CameraFollowTarget;
-                if (ballTarget != null)
-                {
-                    _resolvedFollowTarget = ballTarget;
-                    return;
-                }
-            }
-
-            _resolvedFollowTarget = transform;
-        }
-
-        private Vector3 ResolveCameraCollision(Vector3 pivot, Vector3 desiredPosition)
-        {
-            Vector3 direction = desiredPosition - pivot;
-            float distanceToCamera = direction.magnitude;
-
-            if (distanceToCamera <= 0.001f)
-            {
-                return desiredPosition;
-            }
-
-            direction /= distanceToCamera;
-
-            if (Physics.SphereCast(
-                    pivot,
-                    obstructionRadius,
-                    direction,
-                    out RaycastHit hit,
-                    distanceToCamera,
-                    obstructionMask,
-                    QueryTriggerInteraction.Ignore))
-            {
-                return hit.point - direction * obstructionPadding;
-            }
-
-            return desiredPosition;
         }
 
         private void OnValidate()

@@ -18,9 +18,12 @@ namespace Sumo
 
         [Header("Collision Filtering")]
         [SerializeField] private LayerMask playerMask = ~0;
+        [SerializeField] private bool disableNativePlayerCollision = true;
 
         [Header("Prediction")]
-        [SerializeField] private bool enableClientPredictedImpact;
+        [SerializeField] private bool enableClientPredictedImpact = true;
+        [SerializeField] private bool enableClientPredictedRam = true;
+        [SerializeField] private bool applyPredictedForcesToRemoteProxies = true;
 
         [Header("Debug")]
         [SerializeField] private bool logImpacts;
@@ -28,12 +31,47 @@ namespace Sumo
 
         public event Action<SumoImpactData> ImpactApplied;
 
+        [Networked] private int VictimPresentationSequence { get; set; }
+        [Networked] private float VictimPresentationStrength { get; set; }
+
+        public int VictimPresentationSignalSequence
+        {
+            get
+            {
+                if (TryReadVictimPresentationSignal(out int sequence, out _))
+                {
+                    return sequence;
+                }
+
+                return _victimPresentationSequenceFallback;
+            }
+        }
+
+        public float VictimPresentationSignalStrength
+        {
+            get
+            {
+                if (TryReadVictimPresentationSignal(out _, out float strength))
+                {
+                    return strength;
+                }
+
+                return _victimPresentationStrengthFallback;
+            }
+        }
         public Vector3 CurrentVelocity => _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
+
+        public bool ShouldPredictRemoteProxyForces()
+        {
+            return applyPredictedForcesToRemoteProxies;
+        }
 
         private Rigidbody _rigidbody;
         private SphereCollider _sphereCollider;
         private Vector3 _preSimVelocity;
         private int _preSimVelocityTick = int.MinValue;
+        private int _victimPresentationSequenceFallback;
+        private float _victimPresentationStrengthFallback;
 
         private struct ContactSnapshot
         {
@@ -47,19 +85,70 @@ namespace Sumo
             public float RelativeClosingSpeed;
         }
 
+        private struct AnalyticContact
+        {
+            public int FirstKey;
+            public int SecondKey;
+            public Vector3 FirstVelocity;
+            public Vector3 SecondVelocity;
+            public Vector3 ContactDirection;
+            public Vector3 ContactPoint;
+            public float Penetration;
+            public float Separation;
+            public float RelativeClosingSpeed;
+            public bool IsContact;
+            public bool IsEnter;
+        }
+
+        private struct BlockNormalSample
+        {
+            public int Tick;
+            public Vector3 Sum;
+        }
+
+        private readonly struct PredictedFrameSnapshot
+        {
+            public readonly Dictionary<long, SumoRamState> PairStates;
+            public readonly Dictionary<long, int> LastImpactTicks;
+            public readonly Dictionary<long, int> LastContactTicks;
+
+            public PredictedFrameSnapshot(
+                Dictionary<long, SumoRamState> pairStates,
+                Dictionary<long, int> lastImpactTicks,
+                Dictionary<long, int> lastContactTicks)
+            {
+                PairStates = pairStates;
+                LastImpactTicks = lastImpactTicks;
+                LastContactTicks = lastContactTicks;
+            }
+        }
+
+        private enum SimulationMode : byte
+        {
+            Authoritative = 0,
+            Predicted = 1
+        }
+
         private static readonly Dictionary<long, SumoRamState> PairStates = new Dictionary<long, SumoRamState>(128);
+        private static readonly Dictionary<long, SumoRamState> PredictedPairStates = new Dictionary<long, SumoRamState>(128);
         private static readonly List<long> PairKeysBuffer = new List<long>(64);
         private static readonly List<long> PairPruneBuffer = new List<long>(64);
         private static readonly Dictionary<long, int> PredictedPairLastImpactTick = new Dictionary<long, int>(128);
         private static readonly Dictionary<long, int> PredictedPairLastContactTick = new Dictionary<long, int>(128);
+        private static readonly Dictionary<int, PredictedFrameSnapshot> PredictedHistory = new Dictionary<int, PredictedFrameSnapshot>(192);
+        private static readonly Dictionary<int, SumoCollisionController> ActiveControllers = new Dictionary<int, SumoCollisionController>(128);
+        private static readonly Dictionary<int, BlockNormalSample> AuthorityBlockNormals = new Dictionary<int, BlockNormalSample>(128);
+        private static readonly Dictionary<int, BlockNormalSample> PredictedBlockNormals = new Dictionary<int, BlockNormalSample>(128);
+        private static readonly HashSet<long> IgnoredNativeCollisionPairs = new HashSet<long>();
+        private static readonly List<int> PredictedHistoryTickBuffer = new List<int>(128);
 
         private static int _pairCacheRunnerId = int.MinValue;
         private static int _pairCacheLastTick = int.MinValue;
         private static int _predictedCacheRunnerId = int.MinValue;
         private static int _predictedCacheLastTick = int.MinValue;
 
-        private const int FallbackContactBreakGraceTicks = 1;
-        private const int FallbackReengageBreakTicks = 5;
+        private const int FallbackContactBreakGraceTicks = 6;
+        private const int FallbackReengageBreakTicks = 6;
         private const float FallbackReengageDistance = 0.22f;
         private const float FallbackReengageSpeed = 4.8f;
         private const float FallbackTieSpeedEpsilon = 0.15f;
@@ -67,8 +156,8 @@ namespace Sumo
         private const float FallbackRamStopEnergyThreshold = 0.08f;
         private const float FallbackImpactVerticalLift = 0.02f;
         private const float FallbackImpactBurstDuration = 0.08f;
-        private const float FallbackFirstImpactBurstFrontload = 0.88f;
-        private const float FallbackFirstImpactKickShare = 0.72f;
+        private const float FallbackFirstImpactBurstFrontload = 0.62f;
+        private const float FallbackFirstImpactKickShare = 0.48f;
         private const float FallbackAttackerReferenceTopSpeed = 10f;
         private const int FallbackMaxRamDurationTicks = 32;
         private const int FallbackMinReimpactTicks = 16;
@@ -76,66 +165,119 @@ namespace Sumo
         private const float RamContactBlendFallPerSecond = 7f;
         private const float RamContactStartBlend = 0.24f;
         private const float ActivePhaseContactSeparationEpsilon = 0.02f;
-        private const float PredictedImpactScale = 0.92f;
-        private const float PairDirectionBlend = 0.35f;
+        private const float ActivePhaseContactExtraTolerance = 0.06f;
+        private const float PairDirectionBlend = 0.2f;
         private const int SoftStalePairTicks = 420;
         private const int HardStalePairTicks = 1200;
+        private const float FallbackPlayerContactEnterPadding = 0.03f;
+        private const float FallbackPlayerContactExitPadding = 0.12f;
+        private const float FallbackPlayerContactPenetrationSlop = 0.01f;
+        private const float FallbackPlayerContactPositionCorrection = 0.85f;
+        private const float FallbackPlayerContactVelocityDamping = 1f;
+        private const float PredictedPenetrationResolveRate = 22f;
+        private const float PredictedPenetrationResolveMaxSpeed = 6f;
+        private const float AuthorityMaxPositionCorrectionPerTick = 0.05f;
+        private const float ActiveContactVelocityDampingScale = 0.32f;
+        private const float ActiveContactClosingDeadZone = 0.25f;
+        private const float ActiveContactPenetrationResolveRate = 12f;
+        private const float ActiveContactPenetrationResolveMaxSpeed = 2.6f;
+        private const float ActiveCombatVictimAuthorityResponseShare = 0.15f;
+        private const float ActiveCombatVictimPredictedResponseShare = 0f;
+        private const float ActiveCombatPenetrationSlopBonus = 0.025f;
+        private const int PredictedRollbackHistoryTicks = 192;
 
         private void Awake()
         {
             CacheComponents();
         }
 
+        private void OnEnable()
+        {
+            CacheComponents();
+            RegisterActiveController();
+        }
+
+        private void OnDisable()
+        {
+            UnregisterActiveController();
+        }
+
         public override void Spawned()
         {
             CacheComponents();
             EnsurePairCacheContext();
+            RegisterActiveController();
         }
 
         public override void Despawned(NetworkRunner runner, bool hasState)
         {
-            if (Runner == null || Object == null)
+            int controllerKey = GetControllerKey(this);
+            if (controllerKey != 0)
             {
-                return;
+                RemoveStatesForController(controllerKey, PairStates);
+                RemoveStatesForController(controllerKey, PredictedPairStates);
+                AuthorityBlockNormals.Remove(controllerKey);
+                PredictedBlockNormals.Remove(controllerKey);
             }
 
-            if (!HasStateAuthority)
-            {
-                return;
-            }
-
-            RemoveStatesForController(GetControllerKey(this));
+            UnregisterActiveController();
         }
 
         public override void FixedUpdateNetwork()
         {
-            if (!CanProcessThisTick())
+            CacheComponents();
+            RegisterActiveController();
+
+            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            CachePreSimVelocity(currentTick);
+
+            if (CanProcessAuthorityTick())
             {
-                return;
+                CaptureAnalyticContactsForOwnedPairs(currentTick, PairStates, SimulationMode.Authoritative);
+                ProcessOwnedPairStates(currentTick, PairStates, SimulationMode.Authoritative);
+                PrunePairStates(currentTick, PairStates);
             }
 
-            int currentTick = Runner.Tick.Raw;
-            CachePreSimVelocity(currentTick);
-            ProcessOwnedPairStates(currentTick);
-            PrunePairStates(currentTick);
+            if (CanProcessPredictedTick())
+            {
+                CaptureAnalyticContactsForOwnedPairs(currentTick, PredictedPairStates, SimulationMode.Predicted);
+                ProcessOwnedPairStates(currentTick, PredictedPairStates, SimulationMode.Predicted);
+                PrunePairStates(currentTick, PredictedPairStates);
+                StorePredictedFrame(currentTick);
+            }
         }
 
         public bool HasActiveRamDrive()
         {
-            if (Runner == null || PairStates.Count == 0)
+            return GetRamDriveAssist01() > 0.01f;
+        }
+
+        public float GetRamDriveAssist01()
+        {
+            if (Runner == null)
             {
-                return false;
+                return 0f;
+            }
+
+            Dictionary<long, SumoRamState> states = HasStateAuthority
+                ? PairStates
+                : PredictedPairStates;
+
+            if (states.Count == 0)
+            {
+                return 0f;
             }
 
             int selfKey = GetControllerKey(this);
             if (selfKey == 0)
             {
-                return false;
+                return 0f;
             }
 
             int currentTick = Runner.Tick.Raw;
+            float assist = 0f;
 
-            foreach (KeyValuePair<long, SumoRamState> pair in PairStates)
+            foreach (KeyValuePair<long, SumoRamState> pair in states)
             {
                 SumoRamState state = pair.Value;
                 if (state.AttackerRef != selfKey)
@@ -155,337 +297,261 @@ namespace Sumo
                 }
 
                 if (RequiresPhysicalContact(state.State)
-                    && ComputeEdgeSeparation(state.FirstController, state.SecondController) > ActivePhaseContactSeparationEpsilon)
+                    && ComputeEdgeSeparation(state.FirstController, state.SecondController)
+                        > GetActiveContactSeparationTolerance(state.FirstController, state.SecondController))
                 {
                     continue;
                 }
 
                 if (state.State == SumoPairState.InitialImpact)
                 {
-                    return true;
+                    float duration = Mathf.Max(0.01f, state.InitialImpactDuration);
+                    float elapsed01 = Mathf.Clamp01(state.InitialImpactElapsed / duration);
+                    float impactAssist = Mathf.Lerp(1f, 0.55f, elapsed01);
+                    assist = Mathf.Max(assist, impactAssist);
+                    continue;
                 }
 
                 SumoCollisionController attacker = state.AttackerController;
                 float stopThreshold = GetRamStopThreshold(attacker != null ? attacker : this);
                 if (state.RamEnergy > stopThreshold)
                 {
-                    return true;
+                    float normalizedEnergy = state.InitialRamEnergy > 0.0001f
+                        ? Mathf.Clamp01(state.RamEnergy / state.InitialRamEnergy)
+                        : 0f;
+                    float contactAssist = Mathf.Clamp01(state.RamContactBlend);
+                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
+                    assist = Mathf.Max(assist, ramAssist);
                 }
             }
 
-            return false;
+            return Mathf.Clamp01(assist);
         }
 
-        private void OnCollisionEnter(Collision collision)
+        public bool TryGetMovementBlockNormal(out Vector3 playerBlockNormal)
         {
-            RegisterContact(collision, true);
-        }
+            playerBlockNormal = Vector3.zero;
 
-        private void OnCollisionStay(Collision collision)
-        {
-            RegisterContact(collision, false);
-        }
-
-        private void RegisterContact(Collision collision, bool isEnter)
-        {
-            if (Runner == null || Object == null || !Object.IsInSimulation)
-            {
-                return;
-            }
-
-            if (!HasStateAuthority)
-            {
-                if (enableClientPredictedImpact)
-                {
-                    TryApplyPredictedImpact(collision, isEnter);
-                }
-
-                return;
-            }
-
-            if (!CanCaptureContactThisTick())
-            {
-                return;
-            }
-
-            int currentTick = Runner.Tick.Raw;
-
-            if (!TryBuildContactSnapshot(collision, currentTick, out ContactSnapshot snapshot))
-            {
-                return;
-            }
-
-            bool selfIsFirst = snapshot.SelfKey <= snapshot.OtherKey;
-            SumoCollisionController firstController = selfIsFirst ? this : snapshot.Other;
-            SumoCollisionController secondController = selfIsFirst ? snapshot.Other : this;
-            int firstKey = selfIsFirst ? snapshot.SelfKey : snapshot.OtherKey;
-            int secondKey = selfIsFirst ? snapshot.OtherKey : snapshot.SelfKey;
-            int ownerKey = Mathf.Min(firstKey, secondKey);
-
-            long pairKey = BuildPairKey(firstKey, secondKey);
-            bool hadState = PairStates.TryGetValue(pairKey, out SumoRamState pairState);
-
-            if (hadState && IsPairInvalidForContact(pairState, ownerKey, firstKey, secondKey, currentTick))
-            {
-                hadState = false;
-            }
-
-            int previousContactTick = hadState ? pairState.LastContactTick : int.MinValue;
-
-            if (!hadState)
-            {
-                pairState = CreateFreshState(pairKey, currentTick);
-            }
-
-            pairState.PairKey = pairKey;
-            pairState.OwnerKey = ownerKey;
-            pairState.FirstRef = firstKey;
-            pairState.SecondRef = secondKey;
-            pairState.FirstController = firstController;
-            pairState.SecondController = secondController;
-            pairState.ContactPoint = snapshot.ContactPoint;
-            if (snapshot.ContactNormal.sqrMagnitude > 0.0001f)
-            {
-                pairState.ContactNormal = snapshot.ContactNormal.normalized;
-            }
-
-            int contactBreakTicks = GetPairContactBreakGraceTicks(firstController, secondController);
-            bool contactRestarted = !hadState
-                || previousContactTick == int.MinValue
-                || currentTick - previousContactTick > contactBreakTicks;
-
-            pairState.LastContactTick = currentTick;
-            if (contactRestarted || isEnter)
-            {
-                bool canCaptureEnter = pairState.State != SumoPairState.InitialImpact
-                    && pairState.State != SumoPairState.Ramming;
-
-                if (canCaptureEnter)
-                {
-                    CaptureEnterSnapshot(
-                        ref pairState,
-                        firstController,
-                        secondController,
-                        currentTick,
-                        selfIsFirst,
-                        snapshot);
-                }
-            }
-
-            // Start first impact in the same collision tick to remove perceived delay.
-            if (isEnter)
-            {
-                bool canStartFromCurrentState = pairState.State == SumoPairState.None
-                    || pairState.State == SumoPairState.ReengageReady;
-
-                if (canStartFromCurrentState && HasFreshEnter(pairState))
-                {
-                    bool requireReengageSpeed = pairState.State == SumoPairState.ReengageReady;
-                    int pendingEnterTick = pairState.PendingEnterTick;
-
-                    if (!requireReengageSpeed
-                        || (pairState.ReengageReadyTick > 0 && pendingEnterTick >= pairState.ReengageReadyTick))
-                    {
-                        bool startedImpactNow = TryStartInitialImpact(
-                            ref pairState,
-                            currentTick,
-                            firstController,
-                            secondController,
-                            requireReengageSpeed);
-
-                        ConsumePendingEnter(ref pairState);
-
-                        if (!startedImpactNow && requireReengageSpeed)
-                        {
-                            pairState.State = SumoPairState.RamDepleted;
-                            pairState.ReengageReadyTick = 0;
-                            ClearAttacker(ref pairState);
-                        }
-                    }
-                }
-            }
-
-            PairStates[pairKey] = pairState;
-        }
-
-        private bool TryBuildContactSnapshot(Collision collision, int currentTick, out ContactSnapshot snapshot)
-        {
-            snapshot = default;
-
-            if (collision == null || collision.rigidbody == null)
+            int controllerKey = GetControllerKey(this);
+            if (controllerKey == 0)
             {
                 return false;
             }
 
-            if (!collision.rigidbody.TryGetComponent(out SumoCollisionController other) || other == null || other == this)
+            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            Dictionary<int, BlockNormalSample> source = HasStateAuthority
+                ? AuthorityBlockNormals
+                : PredictedBlockNormals;
+
+            if (!source.TryGetValue(controllerKey, out BlockNormalSample sample))
             {
                 return false;
             }
 
-            if ((playerMask.value & (1 << other.gameObject.layer)) == 0)
+            long tickDelta = (long)currentTick - sample.Tick;
+            if (tickDelta < 0L || tickDelta > 1L)
             {
                 return false;
             }
 
-            if (other.Object == null || !other.Object.IsInSimulation)
+            if (sample.Sum.sqrMagnitude < 0.0001f)
             {
                 return false;
             }
 
-            if (other._rigidbody == null || other._sphereCollider == null)
-            {
-                other.CacheComponents();
-            }
-
-            if (other._rigidbody == null)
-            {
-                return false;
-            }
-
-            ContactPoint contact = collision.contactCount > 0 ? collision.GetContact(0) : default;
-
-            Vector3 selfVelocity = GetVelocitySampleForTick(currentTick);
-            Vector3 otherVelocity = other.GetVelocitySampleForTick(currentTick);
-            Vector3 contactDirection = ResolveDirection(
-                _rigidbody.worldCenterOfMass,
-                other._rigidbody.worldCenterOfMass,
-                collision.contactCount > 0 ? contact.normal : Vector3.zero);
-
-            float relativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(collision.relativeVelocity, contactDirection));
-            if (relativeClosingSpeed <= 0.0001f)
-            {
-                relativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(selfVelocity - otherVelocity, contactDirection));
-            }
-
-            snapshot = new ContactSnapshot
-            {
-                Other = other,
-                SelfKey = GetControllerKey(this),
-                OtherKey = GetControllerKey(other),
-                ContactPoint = collision.contactCount > 0
-                    ? contact.point
-                    : 0.5f * (_rigidbody.worldCenterOfMass + other._rigidbody.worldCenterOfMass),
-                ContactNormal = collision.contactCount > 0 ? contact.normal : Vector3.zero,
-                SelfVelocity = selfVelocity,
-                OtherVelocity = otherVelocity,
-                RelativeClosingSpeed = relativeClosingSpeed
-            };
-
-            return snapshot.SelfKey != 0 && snapshot.OtherKey != 0;
+            playerBlockNormal = sample.Sum.normalized;
+            return true;
         }
 
-        private Vector3 GetVelocitySampleForTick(int tick)
+        private bool CanProcessAuthorityTick()
         {
-            if (_preSimVelocityTick == tick)
-            {
-                return _preSimVelocity;
-            }
-
-            return _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
-        }
-
-        private void CachePreSimVelocity(int currentTick)
-        {
-            if (_rigidbody == null)
-            {
-                return;
-            }
-
-            if (_preSimVelocityTick == currentTick)
-            {
-                return;
-            }
-
-            _preSimVelocity = _rigidbody.linearVelocity;
-            _preSimVelocityTick = currentTick;
-        }
-
-        private static void CaptureEnterSnapshot(
-            ref SumoRamState pairState,
-            SumoCollisionController first,
-            SumoCollisionController second,
-            int currentTick,
-            bool snapshotSelfIsFirst,
-            in ContactSnapshot snapshot)
-        {
-            if (first == null || second == null || first._rigidbody == null || second._rigidbody == null)
-            {
-                return;
-            }
-
-            Vector3 firstToSecond = ResolveDirection(
-                first._rigidbody.worldCenterOfMass,
-                second._rigidbody.worldCenterOfMass,
-                pairState.ContactNormal);
-
-            Vector3 firstVelocity = snapshotSelfIsFirst ? snapshot.SelfVelocity : snapshot.OtherVelocity;
-            Vector3 secondVelocity = snapshotSelfIsFirst ? snapshot.OtherVelocity : snapshot.SelfVelocity;
-
-            float firstApproachSpeed = GetApproachSpeed(first, firstVelocity, firstToSecond);
-            float secondApproachSpeed = GetApproachSpeed(second, secondVelocity, -firstToSecond);
-            float relativeClosing = Mathf.Max(0f, Vector3.Dot(firstVelocity - secondVelocity, firstToSecond));
-            relativeClosing = Mathf.Max(relativeClosing, snapshot.RelativeClosingSpeed);
-
-            pairState.EnterFirstApproachSpeed = firstApproachSpeed;
-            pairState.EnterSecondApproachSpeed = secondApproachSpeed;
-            pairState.EnterRelativeClosingSpeed = Mathf.Max(relativeClosing, Mathf.Max(firstApproachSpeed, secondApproachSpeed));
-            pairState.LastEnterTick = currentTick;
-            pairState.PendingEnterTick = currentTick;
-            pairState.HasPendingEnter = true;
-            pairState.BreakStartTick = 0;
-            pairState.MaxSeparationSinceBreak = 0f;
-        }
-
-        private bool TryApplyPredictedImpact(Collision collision, bool isEnter)
-        {
-            if (Runner == null || !Runner.IsClient || HasStateAuthority || Object == null || !Object.IsInSimulation)
+            if (Runner == null || Object == null || !Object.IsInSimulation || !HasStateAuthority)
             {
                 return false;
             }
 
-            if (!HasInputAuthority)
-            {
-                return false;
-            }
-
-            if (!isEnter)
-            {
-                return false;
-            }
+            EnsurePairCacheContext();
 
             if (_rigidbody == null || _sphereCollider == null)
             {
                 CacheComponents();
             }
 
-            if (_rigidbody == null || _rigidbody.isKinematic)
+            return _rigidbody != null && !_rigidbody.isKinematic;
+        }
+
+        private bool CanProcessPredictedTick()
+        {
+            if (!IsPredictedImpactRuntimeEnabled())
             {
                 return false;
             }
 
-            int currentTick = Runner.Tick.Raw;
+            if (Runner == null
+                || !Runner.IsClient
+                || HasStateAuthority
+                || !HasInputAuthority
+                || Object == null
+                || !Object.IsInSimulation)
+            {
+                return false;
+            }
+
             EnsurePredictedContext();
 
-            if (!TryBuildContactSnapshot(collision, currentTick, out ContactSnapshot snapshot))
+            if (_rigidbody == null || _sphereCollider == null)
             {
-                return false;
+                CacheComponents();
             }
 
-            bool selfIsFirst = snapshot.SelfKey <= snapshot.OtherKey;
-            SumoCollisionController first = selfIsFirst ? this : snapshot.Other;
-            SumoCollisionController second = selfIsFirst ? snapshot.Other : this;
-            int firstKey = selfIsFirst ? snapshot.SelfKey : snapshot.OtherKey;
-            int secondKey = selfIsFirst ? snapshot.OtherKey : snapshot.SelfKey;
-            long pairKey = BuildPairKey(firstKey, secondKey);
+            return _rigidbody != null && !_rigidbody.isKinematic;
+        }
 
-            PredictedPairLastContactTick[pairKey] = currentTick;
-
-            bool hasPreviousPrediction = PredictedPairLastImpactTick.TryGetValue(pairKey, out int lastPredictedTick);
-
-            if (hasPreviousPrediction && currentTick == lastPredictedTick)
+        private void CaptureAnalyticContactsForOwnedPairs(
+            int currentTick,
+            Dictionary<long, SumoRamState> states,
+            SimulationMode mode)
+        {
+            if (_rigidbody == null || _sphereCollider == null)
             {
-                return false;
+                CacheComponents();
             }
+
+            int selfKey = GetControllerKey(this);
+            if (selfKey == 0)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<int, SumoCollisionController> entry in ActiveControllers)
+            {
+                SumoCollisionController other = entry.Value;
+                int otherKey = entry.Key;
+
+                if (!IsValidOtherForPair(other, otherKey, mode))
+                {
+                    continue;
+                }
+
+                if (!ShouldProcessPairWith(selfKey, other, otherKey, mode))
+                {
+                    continue;
+                }
+
+                bool selfIsFirst = selfKey <= otherKey;
+                SumoCollisionController first = selfIsFirst ? this : other;
+                SumoCollisionController second = selfIsFirst ? other : this;
+                int firstKey = selfIsFirst ? selfKey : otherKey;
+                int secondKey = selfIsFirst ? otherKey : selfKey;
+
+                if (first == null || second == null || first == second)
+                {
+                    continue;
+                }
+
+                int ownerKey = mode == SimulationMode.Authoritative
+                    ? Mathf.Min(firstKey, secondKey)
+                    : selfKey;
+
+                long pairKey = BuildPairKey(firstKey, secondKey);
+                bool hadState = states.TryGetValue(pairKey, out SumoRamState pairState);
+
+                if (hadState && IsPairInvalidForContact(pairState, ownerKey, firstKey, secondKey, currentTick))
+                {
+                    hadState = false;
+                }
+
+                if (!hadState)
+                {
+                    pairState = CreateFreshState(pairKey, currentTick);
+                }
+
+                pairState.PairKey = pairKey;
+                pairState.OwnerKey = ownerKey;
+                pairState.FirstRef = firstKey;
+                pairState.SecondRef = secondKey;
+                pairState.FirstController = first;
+                pairState.SecondController = second;
+
+                EnsureNativePlayerCollisionSuppressed(first, second);
+
+                if (!TryBuildAnalyticContact(first, second, pairState, currentTick, out AnalyticContact contact))
+                {
+                    states[pairKey] = pairState;
+                    continue;
+                }
+
+                pairState.ContactPoint = contact.ContactPoint;
+                if (contact.ContactDirection.sqrMagnitude > 0.0001f)
+                {
+                    pairState.ContactNormal = -contact.ContactDirection.normalized;
+                }
+
+                if (contact.IsContact)
+                {
+                    int previousContactTick = pairState.LastContactTick;
+                    pairState.LastContactTick = currentTick;
+
+                    int contactBreakTicks = GetPairContactBreakGraceTicks(first, second);
+                    bool contactRestarted = previousContactTick <= 0
+                        || currentTick - previousContactTick > contactBreakTicks;
+
+                    bool canCaptureEnter = pairState.State != SumoPairState.InitialImpact
+                        && pairState.State != SumoPairState.Ramming;
+
+                    if ((contact.IsEnter || contactRestarted) && canCaptureEnter)
+                    {
+                        ContactSnapshot snapshot = BuildContactSnapshotForPair(second, firstKey, secondKey, contact);
+                        CaptureEnterSnapshot(
+                            ref pairState,
+                            first,
+                            second,
+                            currentTick,
+                            true,
+                            snapshot);
+                    }
+
+                    ResolveAnalyticContactConstraint(first, second, contact, pairState, mode);
+                    AddBlockNormalForTick(mode, firstKey, -contact.ContactDirection, currentTick);
+                    AddBlockNormalForTick(mode, secondKey, contact.ContactDirection, currentTick);
+
+                    if (mode == SimulationMode.Predicted)
+                    {
+                        PredictedPairLastContactTick[pairKey] = currentTick;
+                    }
+                }
+
+                states[pairKey] = pairState;
+            }
+        }
+
+        private static ContactSnapshot BuildContactSnapshotForPair(
+            SumoCollisionController second,
+            int firstKey,
+            int secondKey,
+            in AnalyticContact contact)
+        {
+            return new ContactSnapshot
+            {
+                Other = second,
+                SelfKey = firstKey,
+                OtherKey = secondKey,
+                ContactPoint = contact.ContactPoint,
+                ContactNormal = -contact.ContactDirection,
+                SelfVelocity = contact.FirstVelocity,
+                OtherVelocity = contact.SecondVelocity,
+                RelativeClosingSpeed = contact.RelativeClosingSpeed
+            };
+        }
+
+        private bool TryBuildAnalyticContact(
+            SumoCollisionController first,
+            SumoCollisionController second,
+            in SumoRamState pairState,
+            int currentTick,
+            out AnalyticContact contact)
+        {
+            contact = default;
 
             if (first == null || second == null || first == second)
             {
@@ -502,149 +568,473 @@ namespace Sumo
                 second.CacheComponents();
             }
 
-            if (!CanPredictController(first) || !CanPredictController(second))
+            if (first._rigidbody == null
+                || second._rigidbody == null
+                || first._sphereCollider == null
+                || second._sphereCollider == null)
             {
                 return false;
             }
 
-            Vector3 firstToSecond = ResolveDirection(
-                first._rigidbody.worldCenterOfMass,
-                second._rigidbody.worldCenterOfMass,
-                snapshot.ContactNormal);
-
-            Vector3 firstVelocity = selfIsFirst ? snapshot.SelfVelocity : snapshot.OtherVelocity;
-            Vector3 secondVelocity = selfIsFirst ? snapshot.OtherVelocity : snapshot.SelfVelocity;
-
-            float firstApproachSpeed = GetApproachSpeed(first, firstVelocity, firstToSecond);
-            float secondApproachSpeed = GetApproachSpeed(second, secondVelocity, -firstToSecond);
-
-            SumoAttackerDecision attackerDecision = SumoImpactResolver.ResolveAttacker(
-                firstApproachSpeed,
-                secondApproachSpeed,
-                GetPairTieSpeedEpsilon(first, second),
-                false,
-                false,
-                GetPairResolveTieByLowerKey(first, second),
-                firstKey,
-                secondKey);
-
-            if (!attackerDecision.HasAttacker)
+            if (first.Object == null
+                || second.Object == null
+                || !first.Object.IsInSimulation
+                || !second.Object.IsInSimulation)
             {
                 return false;
             }
 
-            SumoCollisionController attacker = attackerDecision.Role == SumoAttackerRole.First ? first : second;
-            SumoCollisionController victim = attacker == first ? second : first;
-            if (!CanPredictController(attacker) || !CanPredictController(victim))
+            int firstLayerMask = 1 << second.gameObject.layer;
+            int secondLayerMask = 1 << first.gameObject.layer;
+            bool layerAllowed = (first.playerMask.value & firstLayerMask) != 0
+                || (second.playerMask.value & secondLayerMask) != 0;
+
+            if (!layerAllowed)
             {
                 return false;
             }
 
-            Vector3 attackerVelocity = attacker._rigidbody.linearVelocity;
-            Vector3 victimVelocity = victim._rigidbody.linearVelocity;
-            Vector3 attackerToVictim = ResolveDirection(
-                attacker._rigidbody.worldCenterOfMass,
-                victim._rigidbody.worldCenterOfMass,
-                snapshot.ContactNormal);
+            Vector3 firstCenter = first._rigidbody.worldCenterOfMass;
+            Vector3 secondCenter = second._rigidbody.worldCenterOfMass;
+            Vector3 firstToSecond = ResolveDirection(firstCenter, secondCenter, pairState.ContactNormal);
 
-            Vector3 attackDirection = ResolveAttackDirection(attacker, attackerVelocity, attackerToVictim);
-            float directionDot = Mathf.Clamp01(Vector3.Dot(attackDirection, attackerToVictim));
+            float firstRadius = GetScaledRadius(first);
+            float secondRadius = GetScaledRadius(second);
+            float combinedRadius = firstRadius + secondRadius;
 
-            float entryForwardSpeed = attacker == first ? firstApproachSpeed : secondApproachSpeed;
-            float currentForwardSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity, attackerToVictim));
-            float intentForwardSpeed = GetIntentApproachSpeed(attacker, attackerToVictim, attackerVelocity);
-            float relativeClosingSpeed = Mathf.Max(snapshot.RelativeClosingSpeed, Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, attackerToVictim)));
+            float centerDistance = Vector3.Distance(firstCenter, secondCenter);
+            float edgeSeparation = centerDistance - combinedRadius;
+            float penetration = Mathf.Max(0f, -edgeSeparation);
+            float separation = Mathf.Max(0f, edgeSeparation);
 
-            float attackerForwardSpeed = Mathf.Max(entryForwardSpeed, Mathf.Max(currentForwardSpeed, intentForwardSpeed));
+            int contactBreakTicks = GetPairContactBreakGraceTicks(first, second);
+            bool hadRecentContact = IsContactActive(pairState, currentTick, contactBreakTicks);
 
-            float minImpactSpeed = attacker.physicsConfig != null ? attacker.physicsConfig.MinImpactSpeed : 0f;
-            if (attackerForwardSpeed < minImpactSpeed)
+            float enterPadding = GetPairContactEnterPadding(first, second);
+            float exitPadding = GetPairContactExitPadding(first, second);
+            float activePadding = hadRecentContact ? exitPadding : enterPadding;
+            bool isContact = centerDistance <= combinedRadius + activePadding;
+            bool isEnter = isContact && !hadRecentContact;
+
+            Vector3 firstVelocity = first.GetVelocitySampleForTick(currentTick);
+            Vector3 secondVelocity = second.GetVelocitySampleForTick(currentTick);
+            float relativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(firstVelocity - secondVelocity, firstToSecond));
+
+            float firstSurfaceDistance = Mathf.Min(firstRadius, centerDistance * 0.5f);
+            Vector3 contactPoint = firstCenter + firstToSecond * firstSurfaceDistance;
+            if (contactPoint.sqrMagnitude <= 0.0001f)
             {
-                return false;
+                contactPoint = 0.5f * (firstCenter + secondCenter);
             }
 
-            float configuredDashMultiplier = attacker.physicsConfig != null
-                ? attacker.physicsConfig.DashImpactMultiplier
-                : 1f;
-
-            float dashMultiplier = attacker.ballController != null
-                ? attacker.ballController.GetDashImpactMultiplier(configuredDashMultiplier)
-                : Mathf.Max(1f, configuredDashMultiplier);
-
-            float attackerReferenceTopSpeed = GetAttackerReferenceTopSpeed(attacker);
-
-            SumoInitialImpactResult impactResult = SumoImpactResolver.ComputeInitialImpact(
-                attacker.physicsConfig,
-                attackerForwardSpeed,
-                attackerReferenceTopSpeed,
-                relativeClosingSpeed,
-                directionDot,
-                dashMultiplier);
-
-            if (!impactResult.HasImpact)
+            contact = new AnalyticContact
             {
-                return false;
-            }
+                FirstKey = GetControllerKey(first),
+                SecondKey = GetControllerKey(second),
+                FirstVelocity = firstVelocity,
+                SecondVelocity = secondVelocity,
+                ContactDirection = firstToSecond,
+                ContactPoint = contactPoint,
+                Penetration = penetration,
+                Separation = separation,
+                RelativeClosingSpeed = relativeClosingSpeed,
+                IsContact = isContact,
+                IsEnter = isEnter
+            };
 
-            Vector3 impulseDirection = BuildImpulseDirection(
-                attackerToVictim,
-                GetImpactVerticalLift(attacker));
-
-            float rawPredictedVictimImpulse = impactResult.VictimImpulse * PredictedImpactScale;
-            float predictedVictimImpulseCap = Mathf.Max(0.25f, attackerForwardSpeed * 0.48f);
-            float predictedVictimImpulse = Mathf.Min(rawPredictedVictimImpulse, predictedVictimImpulseCap);
-
-            float predictedScale = impactResult.VictimImpulse > 0.0001f
-                ? predictedVictimImpulse / impactResult.VictimImpulse
-                : 0f;
-
-            float predictedAttackerImpulse = impactResult.AttackerRecoilImpulse * predictedScale;
-
-            ApplyPredictedImpulse(victim, impulseDirection * predictedVictimImpulse);
-            ApplyPredictedImpulse(attacker, -impulseDirection * predictedAttackerImpulse);
-
-            PredictedPairLastImpactTick[pairKey] = currentTick;
-            return true;
+            return contact.FirstKey != 0 && contact.SecondKey != 0;
         }
 
-        private static bool CanPredictController(SumoCollisionController controller)
+        private static void ResolveAnalyticContactConstraint(
+            SumoCollisionController first,
+            SumoCollisionController second,
+            in AnalyticContact contact,
+            in SumoRamState pairState,
+            SimulationMode mode)
         {
-            return controller != null
-                && controller._rigidbody != null
-                && !controller._rigidbody.isKinematic
-                && controller.Runner != null
-                && controller.Runner.IsClient
+            if (!contact.IsContact)
+            {
+                return;
+            }
+
+            if (first == null || second == null || first._rigidbody == null || second._rigidbody == null)
+            {
+                return;
+            }
+
+            Vector3 contactDirection = contact.ContactDirection;
+            if (contactDirection.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            contactDirection.Normalize();
+            bool isActiveCombatContact = pairState.State == SumoPairState.InitialImpact
+                || pairState.State == SumoPairState.Ramming;
+            bool useLocalOnlyPredictedCombatResponse = mode == SimulationMode.Predicted && isActiveCombatContact;
+
+            float firstResponseShare = GetActiveCombatContactResponseShare(first, pairState, mode, isActiveCombatContact);
+            float secondResponseShare = GetActiveCombatContactResponseShare(second, pairState, mode, isActiveCombatContact);
+
+            float firstInvMass = GetContactInverseMass(first, mode, useLocalOnlyPredictedCombatResponse) * firstResponseShare;
+            float secondInvMass = GetContactInverseMass(second, mode, useLocalOnlyPredictedCombatResponse) * secondResponseShare;
+
+            float invMassSum = firstInvMass + secondInvMass;
+            if (invMassSum <= 0.0001f)
+            {
+                return;
+            }
+
+            float velocityDamping = GetPairContactVelocityDamping(first, second);
+            if (isActiveCombatContact)
+            {
+                velocityDamping *= ActiveContactVelocityDampingScale;
+            }
+
+            Vector3 firstVelocity = first._rigidbody.linearVelocity;
+            Vector3 secondVelocity = second._rigidbody.linearVelocity;
+            float closingSpeed = Vector3.Dot(firstVelocity - secondVelocity, contactDirection);
+            float closingDeadZone = isActiveCombatContact ? ActiveContactClosingDeadZone : 0f;
+
+            // During predicted combat contact we only stabilize the local body and let
+            // server authority own the two-body pressure response. This removes the
+            // speculative proxy feedback loop that was making the victim jitter.
+            if (!useLocalOnlyPredictedCombatResponse && closingSpeed > closingDeadZone)
+            {
+                float impulseMagnitude = (closingSpeed - closingDeadZone)
+                    * Mathf.Clamp(velocityDamping, 0f, 1.25f)
+                    / invMassSum;
+                Vector3 impulse = contactDirection * impulseMagnitude;
+                ApplyVelocityDelta(first, -impulse * firstInvMass, mode);
+                ApplyVelocityDelta(second, impulse * secondInvMass, mode);
+            }
+
+            float penetrationSlop = GetPairContactPenetrationSlop(first, second);
+            if (isActiveCombatContact)
+            {
+                penetrationSlop += ActiveCombatPenetrationSlopBonus;
+            }
+
+            float penetration = Mathf.Max(0f, contact.Penetration - penetrationSlop);
+            if (penetration <= 0.0001f)
+            {
+                return;
+            }
+
+            float correctionScale = GetPairContactPositionCorrection(first, second);
+            if (correctionScale <= 0f)
+            {
+                return;
+            }
+
+            bool useVelocityPenetrationResolve = mode == SimulationMode.Predicted || isActiveCombatContact;
+            if (useVelocityPenetrationResolve)
+            {
+                float resolveRate = isActiveCombatContact
+                    ? ActiveContactPenetrationResolveRate
+                    : PredictedPenetrationResolveRate;
+                float resolveMaxSpeed = isActiveCombatContact
+                    ? ActiveContactPenetrationResolveMaxSpeed
+                    : PredictedPenetrationResolveMaxSpeed;
+                float resolveSpeed = Mathf.Min(
+                    resolveMaxSpeed,
+                    penetration * resolveRate * correctionScale);
+
+                if (resolveSpeed <= 0.0001f)
+                {
+                    return;
+                }
+
+                Vector3 separationVelocity = contactDirection * (resolveSpeed / invMassSum);
+                ApplyVelocityDelta(first, -separationVelocity * firstInvMass, mode);
+                ApplyVelocityDelta(second, separationVelocity * secondInvMass, mode);
+                return;
+            }
+
+            float correctionDistance = Mathf.Min(
+                penetration * correctionScale,
+                AuthorityMaxPositionCorrectionPerTick);
+            if (correctionDistance <= 0.0001f)
+            {
+                return;
+            }
+
+            Vector3 correction = contactDirection * (correctionDistance / invMassSum);
+            ApplyPositionDelta(first, -correction * firstInvMass, mode);
+            ApplyPositionDelta(second, correction * secondInvMass, mode);
+        }
+
+        private static float GetActiveCombatContactResponseShare(
+            SumoCollisionController controller,
+            in SumoRamState pairState,
+            SimulationMode mode,
+            bool isActiveCombatContact)
+        {
+            if (!isActiveCombatContact || controller == null || !pairState.HasAttacker)
+            {
+                return 1f;
+            }
+
+            int controllerKey = GetControllerKey(controller);
+            if (controllerKey == 0 || controllerKey == pairState.AttackerRef)
+            {
+                return 1f;
+            }
+
+            if (controllerKey != pairState.VictimRef)
+            {
+                return 1f;
+            }
+
+            // During active shove phases the ram/impact model should own victim motion.
+            // Keeping only a small victim share on authority removes the extra micro-kicks
+            // that were fighting reconciliation and showing up as victim jitter.
+            return mode == SimulationMode.Authoritative
+                ? ActiveCombatVictimAuthorityResponseShare
+                : ActiveCombatVictimPredictedResponseShare;
+        }
+
+        private static void ApplyVelocityDelta(SumoCollisionController controller, Vector3 velocityDelta, SimulationMode mode)
+        {
+            if (!CanApplyForces(controller, mode))
+            {
+                return;
+            }
+
+            if (velocityDelta.sqrMagnitude <= 0.0000001f)
+            {
+                return;
+            }
+
+            controller._rigidbody.linearVelocity += velocityDelta;
+        }
+
+        private static void ApplyPositionDelta(SumoCollisionController controller, Vector3 positionDelta, SimulationMode mode)
+        {
+            if (!CanApplyForces(controller, mode))
+            {
+                return;
+            }
+
+            if (positionDelta.sqrMagnitude <= 0.0000001f)
+            {
+                return;
+            }
+
+            controller._rigidbody.position += positionDelta;
+        }
+
+        private static void AddBlockNormalForTick(SimulationMode mode, int controllerKey, Vector3 normal, int currentTick)
+        {
+            if (controllerKey == 0 || normal.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            Dictionary<int, BlockNormalSample> target = mode == SimulationMode.Authoritative
+                ? AuthorityBlockNormals
+                : PredictedBlockNormals;
+
+            if (target.TryGetValue(controllerKey, out BlockNormalSample sample)
+                && sample.Tick == currentTick)
+            {
+                sample.Sum += normal;
+            }
+            else
+            {
+                sample = new BlockNormalSample
+                {
+                    Tick = currentTick,
+                    Sum = normal
+                };
+            }
+
+            target[controllerKey] = sample;
+        }
+
+        private static float GetContactInverseMass(
+            SumoCollisionController controller,
+            SimulationMode mode,
+            bool useLocalOnlyPredictedCombatResponse)
+        {
+            if (!CanApplyForces(controller, mode))
+            {
+                return 0f;
+            }
+
+            if (useLocalOnlyPredictedCombatResponse && !controller.HasInputAuthority)
+            {
+                return 0f;
+            }
+
+            return 1f / Mathf.Max(0.01f, controller._rigidbody.mass);
+        }
+
+        private static bool CanApplyForces(SumoCollisionController controller, SimulationMode mode)
+        {
+            if (controller == null
+                || controller._rigidbody == null
+                || controller._rigidbody.isKinematic
+                || controller.Runner == null
+                || controller.Object == null
+                || !controller.Object.IsInSimulation)
+            {
+                return false;
+            }
+
+            if (mode == SimulationMode.Authoritative)
+            {
+                return controller.HasStateAuthority;
+            }
+
+            return controller.Runner.IsClient
                 && !controller.HasStateAuthority
-                && controller.Object != null
-                && controller.Object.IsInSimulation;
+                && (controller.HasInputAuthority || controller.CanApplyPredictedProxyForces());
         }
 
-        private static void ApplyPredictedImpulse(SumoCollisionController controller, Vector3 impulse)
+        private static bool CanApplyGameplayForces(SumoCollisionController controller, SimulationMode mode)
         {
-            if (!CanPredictController(controller))
+            if (controller == null
+                || controller._rigidbody == null
+                || controller._rigidbody.isKinematic
+                || controller.Runner == null
+                || controller.Object == null
+                || !controller.Object.IsInSimulation)
             {
-                return;
+                return false;
             }
 
-            if (impulse.sqrMagnitude <= 0.0000001f)
+            if (mode == SimulationMode.Authoritative)
             {
-                return;
+                return controller.HasStateAuthority;
             }
 
-            controller._rigidbody.AddForce(impulse, ForceMode.Impulse);
+            return controller.Runner.IsClient
+                && !controller.HasStateAuthority
+                && (controller.HasInputAuthority || controller.CanApplyPredictedProxyForces());
         }
 
-        private void ProcessOwnedPairStates(int currentTick)
+        private bool CanApplyPredictedProxyForces()
+        {
+            if (ballController == null)
+            {
+                CacheComponents();
+            }
+
+            return applyPredictedForcesToRemoteProxies
+                && ballController != null
+                && ballController.IsRemoteProxyPredictionActive();
+        }
+
+        private static bool IsValidOtherForPair(SumoCollisionController other, int otherKey, SimulationMode mode)
+        {
+            if (other == null || otherKey == 0)
+            {
+                return false;
+            }
+
+            if (other._rigidbody == null || other._sphereCollider == null)
+            {
+                other.CacheComponents();
+            }
+            else if (other.ballController == null)
+            {
+                other.CacheComponents();
+            }
+
+            if (other._rigidbody == null || other._rigidbody.isKinematic)
+            {
+                return false;
+            }
+
+            if (other.Runner == null
+                || other.Object == null
+                || !other.Object.IsInSimulation)
+            {
+                return false;
+            }
+
+            if (mode == SimulationMode.Authoritative)
+            {
+                return other.HasStateAuthority;
+            }
+
+            // In predicted mode the local attacker still needs contact data against
+            // remote proxies so it can stop cleanly at the victim surface, but we do
+            // not require the proxy itself to be client-simulated. The predicted force
+            // application path still only affects the local player, so victim visuals
+            // remain smooth.
+            return !other.HasStateAuthority
+                && other.ballController != null;
+        }
+
+        private bool ShouldProcessPairWith(int selfKey, SumoCollisionController other, int otherKey, SimulationMode mode)
+        {
+            if (other == null || other == this || selfKey == 0 || otherKey == 0 || selfKey == otherKey)
+            {
+                return false;
+            }
+
+            if (mode == SimulationMode.Authoritative)
+            {
+                return selfKey < otherKey;
+            }
+
+            if (selfKey < otherKey)
+            {
+                return true;
+            }
+
+            return !other.HasInputAuthority;
+        }
+
+        private static void EnsureNativePlayerCollisionSuppressed(
+            SumoCollisionController first,
+            SumoCollisionController second)
+        {
+            if (first == null || second == null || first == second)
+            {
+                return;
+            }
+
+            if (!first.disableNativePlayerCollision && !second.disableNativePlayerCollision)
+            {
+                return;
+            }
+
+            if (first._sphereCollider == null || first._sphereCollider.isTrigger)
+            {
+                return;
+            }
+
+            if (second._sphereCollider == null || second._sphereCollider.isTrigger)
+            {
+                return;
+            }
+
+            long pairKey = BuildPairKey(GetControllerKey(first), GetControllerKey(second));
+            if (pairKey == 0 || !IgnoredNativeCollisionPairs.Add(pairKey))
+            {
+                return;
+            }
+
+            Physics.IgnoreCollision(first._sphereCollider, second._sphereCollider, true);
+        }
+
+        private void ProcessOwnedPairStates(
+            int currentTick,
+            Dictionary<long, SumoRamState> states,
+            SimulationMode mode)
         {
             int selfKey = GetControllerKey(this);
-            if (selfKey == 0 || PairStates.Count == 0)
+            if (selfKey == 0 || states.Count == 0)
             {
                 return;
             }
 
             PairKeysBuffer.Clear();
 
-            foreach (KeyValuePair<long, SumoRamState> pair in PairStates)
+            foreach (KeyValuePair<long, SumoRamState> pair in states)
             {
                 if (pair.Value.OwnerKey == selfKey)
                 {
@@ -655,14 +1045,14 @@ namespace Sumo
             for (int i = 0; i < PairKeysBuffer.Count; i++)
             {
                 long pairKey = PairKeysBuffer[i];
-                if (!PairStates.TryGetValue(pairKey, out SumoRamState pairState))
+                if (!states.TryGetValue(pairKey, out SumoRamState pairState))
                 {
                     continue;
                 }
 
                 if (!TryResolvePairControllers(ref pairState, out SumoCollisionController first, out SumoCollisionController second))
                 {
-                    PairStates.Remove(pairKey);
+                    states.Remove(pairKey);
                     continue;
                 }
 
@@ -671,7 +1061,7 @@ namespace Sumo
                 if (hasContact && RequiresPhysicalContact(pairState.State))
                 {
                     float separation = ComputeEdgeSeparation(first, second);
-                    if (separation > ActivePhaseContactSeparationEpsilon)
+                    if (separation > GetActiveContactSeparationTolerance(first, second))
                     {
                         hasContact = false;
                     }
@@ -685,15 +1075,15 @@ namespace Sumo
                 switch (pairState.State)
                 {
                     case SumoPairState.None:
-                        ProcessNoneState(ref pairState, currentTick, hasContact, first, second);
+                        ProcessNoneState(ref pairState, currentTick, hasContact, first, second, mode);
                         break;
 
                     case SumoPairState.InitialImpact:
-                        ProcessInitialImpactState(ref pairState, currentTick, hasContact);
+                        ProcessInitialImpactState(ref pairState, currentTick, hasContact, mode);
                         break;
 
                     case SumoPairState.Ramming:
-                        ProcessRammingState(ref pairState, currentTick, hasContact);
+                        ProcessRammingState(ref pairState, currentTick, hasContact, mode);
                         break;
 
                     case SumoPairState.RamDepleted:
@@ -701,17 +1091,17 @@ namespace Sumo
                         break;
 
                     case SumoPairState.ReengageReady:
-                        ProcessReengageReadyState(ref pairState, currentTick, hasContact, first, second);
+                        ProcessReengageReadyState(ref pairState, currentTick, hasContact, first, second, mode);
                         break;
                 }
 
                 if (ShouldRemoveState(pairState, currentTick, contactBreakTicks))
                 {
-                    PairStates.Remove(pairKey);
+                    states.Remove(pairKey);
                 }
                 else
                 {
-                    PairStates[pairKey] = pairState;
+                    states[pairKey] = pairState;
                 }
             }
 
@@ -723,7 +1113,8 @@ namespace Sumo
             int currentTick,
             bool hasContact,
             SumoCollisionController first,
-            SumoCollisionController second)
+            SumoCollisionController second,
+            SimulationMode mode)
         {
             if (!hasContact)
             {
@@ -738,7 +1129,7 @@ namespace Sumo
                 return;
             }
 
-            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, false);
+            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, false, mode);
             ConsumePendingEnter(ref pairState);
 
             if (!startedImpact)
@@ -748,7 +1139,11 @@ namespace Sumo
             }
         }
 
-        private void ProcessInitialImpactState(ref SumoRamState pairState, int currentTick, bool hasContact)
+        private void ProcessInitialImpactState(
+            ref SumoRamState pairState,
+            int currentTick,
+            bool hasContact,
+            SimulationMode mode)
         {
             if (!TryGetLiveAttackerVictim(ref pairState, out SumoCollisionController attacker, out SumoCollisionController victim))
             {
@@ -757,7 +1152,7 @@ namespace Sumo
                 return;
             }
 
-            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact);
+            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
 
             float stopThreshold = GetRamStopThreshold(attacker);
             if (pairState.RamEnergy <= stopThreshold)
@@ -770,12 +1165,22 @@ namespace Sumo
             pairState.State = SumoPairState.Ramming;
         }
 
-        private void ProcessRammingState(ref SumoRamState pairState, int currentTick, bool hasContact)
+        private void ProcessRammingState(
+            ref SumoRamState pairState,
+            int currentTick,
+            bool hasContact,
+            SimulationMode mode)
         {
             if (!TryGetLiveAttackerVictim(ref pairState, out SumoCollisionController attacker, out SumoCollisionController victim))
             {
                 pairState.State = SumoPairState.None;
                 ClearAttacker(ref pairState);
+                return;
+            }
+
+            if (mode == SimulationMode.Predicted && !IsPredictedRamRuntimeEnabled())
+            {
+                SetRamDepleted(ref pairState, hasContact, currentTick);
                 return;
             }
 
@@ -793,7 +1198,7 @@ namespace Sumo
             pairState.LastRamTick = currentTick;
 
             float deltaTime = Runner != null ? Runner.DeltaTime : Time.fixedDeltaTime;
-            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact);
+            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
 
             if (!hasContact)
             {
@@ -859,8 +1264,12 @@ namespace Sumo
 
             if (ramTick.HasForce)
             {
-                ApplyAcceleration(victim, liveDirection * ramTick.VictimAcceleration);
-                ApplyAcceleration(attacker, -liveDirection * ramTick.AttackerAcceleration);
+                ApplyAcceleration(victim, liveDirection * ramTick.VictimAcceleration, mode);
+
+                if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
+                {
+                    ApplyAcceleration(attacker, -liveDirection * ramTick.AttackerAcceleration, mode);
+                }
             }
 
             pairState.RamEnergy = Mathf.Max(0f, pairState.RamEnergy - ramTick.EnergyDecay);
@@ -873,7 +1282,7 @@ namespace Sumo
                 if (logStateMachine || attacker.logStateMachine || victim.logStateMachine)
                 {
                     Debug.Log(
-                        $"SumoCollisionController: ram stop {attacker.name} -> {victim.name}; forceScale={ramTick.RamForceScale:0.00}; pressure={attackerForwardSpeed:0.00}; dot={directionDot:0.00}; tick={currentTick}");
+                        $"SumoCollisionController: ram stop {attacker.name} -> {victim.name}; forceScale={ramTick.RamForceScale:0.00}; pressure={attackerForwardSpeed:0.00}; dot={directionDot:0.00}; tick={currentTick}; mode={mode}");
                 }
             }
         }
@@ -916,7 +1325,8 @@ namespace Sumo
             int currentTick,
             bool hasContact,
             SumoCollisionController first,
-            SumoCollisionController second)
+            SumoCollisionController second,
+            SimulationMode mode)
         {
             if (!hasContact)
             {
@@ -942,7 +1352,7 @@ namespace Sumo
                 return;
             }
 
-            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, true);
+            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, true, mode);
 
             if (!startedImpact)
             {
@@ -957,9 +1367,17 @@ namespace Sumo
             int currentTick,
             SumoCollisionController first,
             SumoCollisionController second,
-            bool requireReengageSpeed)
+            bool requireReengageSpeed,
+            SimulationMode mode)
         {
             if (currentTick == pairState.LastImpactTick)
+            {
+                return false;
+            }
+
+            if (mode == SimulationMode.Predicted
+                && PredictedPairLastImpactTick.TryGetValue(pairState.PairKey, out int lastPredictedTick)
+                && currentTick == lastPredictedTick)
             {
                 return false;
             }
@@ -1132,33 +1550,87 @@ namespace Sumo
             pairState.BreakStartTick = 0;
             pairState.MaxSeparationSinceBreak = 0f;
             pairState.ReengageReadyTick = 0;
-            ApplyInitialImpactKickoff(ref pairState, attacker, victim);
-            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, true);
+            ApplyInitialImpactKickoff(ref pairState, attacker, victim, mode);
+            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, true, mode);
 
-            SumoImpactData impactData = new SumoImpactData(
-                attacker.Object,
-                victim.Object,
-                impulseDirection,
-                attackerVelocity - victimVelocity,
-                attackerForwardSpeed,
-                relativeClosingSpeed,
-                impactResult.SpeedCurve,
-                impactResult.AngleScale,
-                impactResult.DashMultiplier,
-                impactResult.VictimImpulse,
-                currentTick,
-                pairState.ContactPoint);
+            if (mode == SimulationMode.Authoritative)
+            {
+                SumoImpactData impactData = new SumoImpactData(
+                    attacker.Object,
+                    victim.Object,
+                    impulseDirection,
+                    attackerVelocity - victimVelocity,
+                    attackerForwardSpeed,
+                    relativeClosingSpeed,
+                    impactResult.SpeedCurve,
+                    impactResult.AngleScale,
+                    impactResult.DashMultiplier,
+                    impactResult.VictimImpulse,
+                    currentTick,
+                    pairState.ContactPoint);
 
-            attacker.ImpactApplied?.Invoke(impactData);
-            victim.ImpactApplied?.Invoke(impactData);
+                float presentationStrength = ComputeVictimPresentationStrength(attacker, impactResult);
+                victim.PublishVictimPresentationImpact(presentationStrength);
+
+                attacker.ImpactApplied?.Invoke(impactData);
+                victim.ImpactApplied?.Invoke(impactData);
+            }
+            else
+            {
+                PredictedPairLastImpactTick[pairState.PairKey] = currentTick;
+            }
 
             if (logImpacts || attacker.logImpacts || victim.logImpacts)
             {
                 Debug.Log(
-                    $"SumoCollisionController: initial-impact {attacker.name} -> {victim.name}; impulse={impactResult.VictimImpulse:0.00}; speed={attackerForwardSpeed:0.00}; closing={relativeClosingSpeed:0.00}; dot={directionDot:0.00}; ramEnergy={pairState.RamEnergy:0.00}; tie={attackerDecision.TieResolvedBy}; tick={currentTick}");
+                    $"SumoCollisionController: initial-impact {attacker.name} -> {victim.name}; impulse={impactResult.VictimImpulse:0.00}; speed={attackerForwardSpeed:0.00}; closing={relativeClosingSpeed:0.00}; dot={directionDot:0.00}; ramEnergy={pairState.RamEnergy:0.00}; tie={attackerDecision.TieResolvedBy}; tick={currentTick}; mode={mode}");
             }
 
             return true;
+        }
+
+        private static float ComputeVictimPresentationStrength(
+            SumoCollisionController attacker,
+            SumoInitialImpactResult impactResult)
+        {
+            float speedStrength = Mathf.Clamp01(impactResult.SpeedCurve);
+            float impulseCap = attacker != null && attacker.physicsConfig != null
+                ? Mathf.Max(1f, attacker.physicsConfig.MaxImpactImpulse)
+                : 24f;
+            float impulseStrength = Mathf.Clamp01(impactResult.VictimImpulse / impulseCap);
+            return Mathf.Clamp01(Mathf.Max(speedStrength, impulseStrength));
+        }
+
+        private void PublishVictimPresentationImpact(float normalizedStrength)
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            VictimPresentationStrength = Mathf.Clamp01(normalizedStrength);
+            VictimPresentationSequence++;
+            _victimPresentationStrengthFallback = VictimPresentationStrength;
+            _victimPresentationSequenceFallback = VictimPresentationSequence;
+        }
+
+        private bool TryReadVictimPresentationSignal(out int sequence, out float strength)
+        {
+            sequence = _victimPresentationSequenceFallback;
+            strength = _victimPresentationStrengthFallback;
+
+            try
+            {
+                sequence = VictimPresentationSequence;
+                strength = VictimPresentationStrength;
+                _victimPresentationSequenceFallback = sequence;
+                _victimPresentationStrengthFallback = strength;
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         private static bool IsReengageSatisfied(
@@ -1225,7 +1697,8 @@ namespace Sumo
         private static void ApplyInitialImpactKickoff(
             ref SumoRamState pairState,
             SumoCollisionController attacker,
-            SumoCollisionController victim)
+            SumoCollisionController victim,
+            SimulationMode mode)
         {
             if (attacker == null
                 || victim == null
@@ -1277,8 +1750,12 @@ namespace Sumo
             float victimKickImpulse = victimKickDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
             float attackerKickImpulse = attackerKickDeltaV * Mathf.Max(0.01f, attacker._rigidbody.mass);
 
-            ApplyImpulse(victim, direction * victimKickImpulse);
-            ApplyImpulse(attacker, -direction * attackerKickImpulse);
+            ApplyImpulse(victim, direction * victimKickImpulse, mode);
+
+            if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
+            {
+                ApplyImpulse(attacker, -direction * attackerKickImpulse, mode);
+            }
 
             float remainingShare = Mathf.Clamp01(1f - speedScaledShare);
             pairState.InitialVictimDeltaV *= remainingShare;
@@ -1289,7 +1766,8 @@ namespace Sumo
             ref SumoRamState pairState,
             SumoCollisionController attacker,
             SumoCollisionController victim,
-            bool hasContact)
+            bool hasContact,
+            SimulationMode mode)
         {
             if (pairState.InitialVictimDeltaV <= 0.0001f && pairState.InitialAttackerDeltaV <= 0.0001f)
             {
@@ -1350,8 +1828,12 @@ namespace Sumo
             float victimDeltaVStep = pairState.InitialVictimDeltaV * segmentWeight;
             float attackerDeltaVStep = pairState.InitialAttackerDeltaV * segmentWeight;
 
-            ApplyAcceleration(victim, direction * (victimDeltaVStep / dt));
-            ApplyAcceleration(attacker, -direction * (attackerDeltaVStep / dt));
+            ApplyAcceleration(victim, direction * (victimDeltaVStep / dt), mode);
+
+            if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
+            {
+                ApplyAcceleration(attacker, -direction * (attackerDeltaVStep / dt), mode);
+            }
 
             pairState.InitialImpactElapsed = nextElapsed;
             return nextElapsed >= duration - 0.0001f;
@@ -1370,6 +1852,19 @@ namespace Sumo
             float frontloadExponent = Mathf.Lerp(1f, 2.6f, frontload);
             float frontLoadedIntegral = 1f - Mathf.Pow(1f - u, frontloadExponent);
             return Mathf.Lerp(legacyIntegral, frontLoadedIntegral, frontload);
+        }
+
+        // Client prediction keeps the shove readable by pushing the victim side of the
+        // pair, but attacker recoil/drag on clients was the main source of attacker
+        // micro-jerks and proxy twitch. Authority still owns the real combat outcome.
+        private static bool ShouldApplyPredictedAttackerRecoil(SumoCollisionController attacker, SimulationMode mode)
+        {
+            if (mode != SimulationMode.Predicted)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static void SetRamDepleted(ref SumoRamState pairState, bool contactActive, int currentTick)
@@ -1569,40 +2064,6 @@ namespace Sumo
             };
         }
 
-        private bool CanProcessThisTick()
-        {
-            if (Runner == null || Object == null || !Object.IsInSimulation || !HasStateAuthority)
-            {
-                return false;
-            }
-
-            EnsurePairCacheContext();
-
-            if (_rigidbody == null || _sphereCollider == null)
-            {
-                CacheComponents();
-            }
-
-            return _rigidbody != null && !_rigidbody.isKinematic;
-        }
-
-        private bool CanCaptureContactThisTick()
-        {
-            if (Runner == null || Object == null || !Object.IsInSimulation || !HasStateAuthority)
-            {
-                return false;
-            }
-
-            EnsurePairCacheContext();
-
-            if (_rigidbody == null || _sphereCollider == null)
-            {
-                CacheComponents();
-            }
-
-            return _rigidbody != null && !_rigidbody.isKinematic;
-        }
-
         private void EnsurePredictedContext()
         {
             if (Runner == null)
@@ -1618,14 +2079,113 @@ namespace Sumo
                 && _predictedCacheLastTick != int.MinValue
                 && currentTick < _predictedCacheLastTick;
 
-            if (runnerChanged || tickRegressed)
+            if (runnerChanged)
             {
+                PredictedPairStates.Clear();
                 PredictedPairLastImpactTick.Clear();
                 PredictedPairLastContactTick.Clear();
+                PredictedBlockNormals.Clear();
+                PredictedHistory.Clear();
+            }
+            else if (tickRegressed)
+            {
+                RestorePredictedFrame(currentTick - 1);
+                TrimPredictedHistory(currentTick, removeFutureTicks: true);
+                PredictedBlockNormals.Clear();
             }
 
             _predictedCacheRunnerId = runnerId;
             _predictedCacheLastTick = currentTick;
+        }
+
+        private static void StorePredictedFrame(int currentTick)
+        {
+            if (currentTick <= 0)
+            {
+                return;
+            }
+
+            PredictedHistory[currentTick] = new PredictedFrameSnapshot(
+                ClonePairStates(PredictedPairStates),
+                new Dictionary<long, int>(PredictedPairLastImpactTick),
+                new Dictionary<long, int>(PredictedPairLastContactTick));
+
+            TrimPredictedHistory(currentTick, removeFutureTicks: false);
+        }
+
+        private static void RestorePredictedFrame(int sourceTick)
+        {
+            if (sourceTick <= 0 || !PredictedHistory.TryGetValue(sourceTick, out PredictedFrameSnapshot snapshot))
+            {
+                PredictedPairStates.Clear();
+                PredictedPairLastImpactTick.Clear();
+                PredictedPairLastContactTick.Clear();
+                return;
+            }
+
+            CopyPairStates(snapshot.PairStates, PredictedPairStates);
+            CopyIntMap(snapshot.LastImpactTicks, PredictedPairLastImpactTick);
+            CopyIntMap(snapshot.LastContactTicks, PredictedPairLastContactTick);
+        }
+
+        private static Dictionary<long, SumoRamState> ClonePairStates(Dictionary<long, SumoRamState> source)
+        {
+            Dictionary<long, SumoRamState> clone = new Dictionary<long, SumoRamState>(source.Count);
+
+            foreach (KeyValuePair<long, SumoRamState> pair in source)
+            {
+                clone[pair.Key] = pair.Value;
+            }
+
+            return clone;
+        }
+
+        private static void CopyPairStates(Dictionary<long, SumoRamState> source, Dictionary<long, SumoRamState> target)
+        {
+            target.Clear();
+
+            foreach (KeyValuePair<long, SumoRamState> pair in source)
+            {
+                target[pair.Key] = pair.Value;
+            }
+        }
+
+        private static void CopyIntMap(Dictionary<long, int> source, Dictionary<long, int> target)
+        {
+            target.Clear();
+
+            foreach (KeyValuePair<long, int> pair in source)
+            {
+                target[pair.Key] = pair.Value;
+            }
+        }
+
+        private static void TrimPredictedHistory(int currentTick, bool removeFutureTicks)
+        {
+            if (PredictedHistory.Count == 0)
+            {
+                return;
+            }
+
+            int minRetainedTick = currentTick - PredictedRollbackHistoryTicks;
+            PredictedHistoryTickBuffer.Clear();
+
+            foreach (KeyValuePair<int, PredictedFrameSnapshot> frame in PredictedHistory)
+            {
+                bool tooOld = frame.Key < minRetainedTick;
+                bool inFuture = removeFutureTicks && frame.Key >= currentTick;
+                if (tooOld || inFuture)
+                {
+                    PredictedHistoryTickBuffer.Add(frame.Key);
+                }
+            }
+
+            for (int i = 0; i < PredictedHistoryTickBuffer.Count; i++)
+            {
+                PredictedHistory.Remove(PredictedHistoryTickBuffer[i]);
+            }
+
+            PredictedHistoryTickBuffer.Clear();
         }
 
         private void EnsurePairCacheContext()
@@ -1646,24 +2206,32 @@ namespace Sumo
             if (runnerChanged || tickRegressed)
             {
                 PairStates.Clear();
+                PredictedPairStates.Clear();
                 PairKeysBuffer.Clear();
                 PairPruneBuffer.Clear();
+                PredictedPairLastImpactTick.Clear();
+                PredictedPairLastContactTick.Clear();
+                PredictedHistory.Clear();
+                AuthorityBlockNormals.Clear();
+                PredictedBlockNormals.Clear();
+                ActiveControllers.Clear();
+                IgnoredNativeCollisionPairs.Clear();
             }
 
             _pairCacheRunnerId = runnerId;
             _pairCacheLastTick = currentTick;
         }
 
-        private void PrunePairStates(int currentTick)
+        private void PrunePairStates(int currentTick, Dictionary<long, SumoRamState> states)
         {
-            if (PairStates.Count <= 96 || (currentTick & 63) != 0)
+            if (states.Count <= 96 || (currentTick & 63) != 0)
             {
                 return;
             }
 
             PairPruneBuffer.Clear();
 
-            foreach (KeyValuePair<long, SumoRamState> pair in PairStates)
+            foreach (KeyValuePair<long, SumoRamState> pair in states)
             {
                 SumoRamState state = pair.Value;
                 int contactBreakTicks = GetPairContactBreakGraceTicks(state.FirstController, state.SecondController);
@@ -1676,22 +2244,22 @@ namespace Sumo
 
             for (int i = 0; i < PairPruneBuffer.Count; i++)
             {
-                PairStates.Remove(PairPruneBuffer[i]);
+                states.Remove(PairPruneBuffer[i]);
             }
 
             PairPruneBuffer.Clear();
         }
 
-        private static void RemoveStatesForController(int controllerKey)
+        private static void RemoveStatesForController(int controllerKey, Dictionary<long, SumoRamState> states)
         {
-            if (controllerKey == 0 || PairStates.Count == 0)
+            if (controllerKey == 0 || states.Count == 0)
             {
                 return;
             }
 
             PairPruneBuffer.Clear();
 
-            foreach (KeyValuePair<long, SumoRamState> pair in PairStates)
+            foreach (KeyValuePair<long, SumoRamState> pair in states)
             {
                 SumoRamState state = pair.Value;
                 if (state.OwnerKey == controllerKey
@@ -1706,7 +2274,7 @@ namespace Sumo
 
             for (int i = 0; i < PairPruneBuffer.Count; i++)
             {
-                PairStates.Remove(PairPruneBuffer[i]);
+                states.Remove(PairPruneBuffer[i]);
             }
 
             PairPruneBuffer.Clear();
@@ -1769,7 +2337,7 @@ namespace Sumo
         private static int GetPairContactBreakGraceTicks(SumoCollisionController a, SumoCollisionController b)
         {
             int configured = Mathf.Max(GetContactBreakGraceTicks(a), GetContactBreakGraceTicks(b));
-            return Mathf.Clamp(configured, 1, 2);
+            return Mathf.Clamp(configured, 3, 12);
         }
 
         private static int GetContactBreakGraceTicks(SumoCollisionController source)
@@ -1779,18 +2347,82 @@ namespace Sumo
                 : FallbackContactBreakGraceTicks;
         }
 
+        private static float GetPairContactEnterPadding(SumoCollisionController a, SumoCollisionController b)
+        {
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.PlayerContactEnterPadding
+                : FallbackPlayerContactEnterPadding;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.PlayerContactEnterPadding
+                : FallbackPlayerContactEnterPadding;
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0f, 0.25f);
+        }
+
+        private static float GetPairContactExitPadding(SumoCollisionController a, SumoCollisionController b)
+        {
+            float enterPadding = GetPairContactEnterPadding(a, b);
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.PlayerContactExitPadding
+                : FallbackPlayerContactExitPadding;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.PlayerContactExitPadding
+                : FallbackPlayerContactExitPadding;
+            return Mathf.Clamp(Mathf.Max(Mathf.Max(fromA, fromB), enterPadding), enterPadding, 0.4f);
+        }
+
+        private static float GetActiveContactSeparationTolerance(SumoCollisionController a, SumoCollisionController b)
+        {
+            float exitPadding = GetPairContactExitPadding(a, b);
+            return Mathf.Max(
+                ActivePhaseContactSeparationEpsilon,
+                Mathf.Min(0.2f, exitPadding + ActivePhaseContactExtraTolerance));
+        }
+
+        private static float GetPairContactPenetrationSlop(SumoCollisionController a, SumoCollisionController b)
+        {
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.PlayerContactPenetrationSlop
+                : FallbackPlayerContactPenetrationSlop;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.PlayerContactPenetrationSlop
+                : FallbackPlayerContactPenetrationSlop;
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0f, 0.12f);
+        }
+
+        private static float GetPairContactPositionCorrection(SumoCollisionController a, SumoCollisionController b)
+        {
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.PlayerContactPositionCorrection
+                : FallbackPlayerContactPositionCorrection;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.PlayerContactPositionCorrection
+                : FallbackPlayerContactPositionCorrection;
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0f, 1f);
+        }
+
+        private static float GetPairContactVelocityDamping(SumoCollisionController a, SumoCollisionController b)
+        {
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.PlayerContactVelocityDamping
+                : FallbackPlayerContactVelocityDamping;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.PlayerContactVelocityDamping
+                : FallbackPlayerContactVelocityDamping;
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0f, 1.25f);
+        }
+
         private static int GetPairReengageBreakTicks(SumoCollisionController a, SumoCollisionController b)
         {
             int fromA = a != null && a.physicsConfig != null ? a.physicsConfig.ReengageBreakTicks : FallbackReengageBreakTicks;
             int fromB = b != null && b.physicsConfig != null ? b.physicsConfig.ReengageBreakTicks : FallbackReengageBreakTicks;
-            return Mathf.Max(FallbackReengageBreakTicks, Mathf.Max(fromA, fromB));
+            return Mathf.Clamp(Mathf.Max(FallbackReengageBreakTicks, Mathf.Max(fromA, fromB)), 4, 16);
         }
 
         private static float GetPairReengageDistance(SumoCollisionController a, SumoCollisionController b)
         {
             float fromA = a != null && a.physicsConfig != null ? a.physicsConfig.ReengageDistance : FallbackReengageDistance;
             float fromB = b != null && b.physicsConfig != null ? b.physicsConfig.ReengageDistance : FallbackReengageDistance;
-            return Mathf.Max(FallbackReengageDistance, Mathf.Max(fromA, fromB));
+            return Mathf.Clamp(Mathf.Max(FallbackReengageDistance, Mathf.Max(fromA, fromB)), 0.14f, 0.4f);
         }
 
         private static float GetPairReengageSpeedThreshold(SumoCollisionController a, SumoCollisionController b)
@@ -1885,13 +2517,8 @@ namespace Sumo
             }
 
             Vector3 intentDirection = source != null && source.ballController != null
-                ? source.ballController.CurrentMoveDirection
-                : Vector3.zero;
-
-            if (intentDirection.sqrMagnitude < 0.0001f)
-            {
-                intentDirection = GetHorizontalDirection(fallbackVelocity);
-            }
+                ? source.ballController.GetContactIntentDirection(fallbackVelocity)
+                : GetHorizontalDirection(fallbackVelocity);
 
             if (intentDirection.sqrMagnitude < 0.0001f)
             {
@@ -1907,6 +2534,26 @@ namespace Sumo
             return planarSpeed * Mathf.Clamp01(directionDot);
         }
 
+        private bool IsPredictedImpactRuntimeEnabled()
+        {
+            if (Runner != null && Runner.IsClient && !HasStateAuthority)
+            {
+                return true;
+            }
+
+            return enableClientPredictedImpact;
+        }
+
+        private bool IsPredictedRamRuntimeEnabled()
+        {
+            if (Runner != null && Runner.IsClient && !HasStateAuthority)
+            {
+                return true;
+            }
+
+            return enableClientPredictedRam;
+        }
+
         private static float GetPlanarSpeedEstimate(SumoCollisionController source, Vector3 fallbackVelocity)
         {
             Vector3 horizontalVelocity = new Vector3(fallbackVelocity.x, 0f, fallbackVelocity.z);
@@ -1917,8 +2564,7 @@ namespace Sumo
                 return speed;
             }
 
-            float controllerSpeedEstimate = source.ballController.CurrentSpeed01 * Mathf.Max(0.01f, source.ballController.MaxSpeed);
-            return Mathf.Max(speed, controllerSpeedEstimate);
+            return source.ballController.GetContactPlanarSpeed(fallbackVelocity);
         }
 
         private static float ComputeDirectionDot(
@@ -1927,7 +2573,7 @@ namespace Sumo
             Vector3 targetDirection)
         {
             Vector3 moveDirection = attacker != null && attacker.ballController != null
-                ? attacker.ballController.CurrentMoveDirection
+                ? attacker.ballController.GetContactIntentDirection(attackerVelocity)
                 : Vector3.zero;
 
             Vector3 velocityDirection = GetHorizontalDirection(attackerVelocity);
@@ -1949,7 +2595,7 @@ namespace Sumo
             Vector3 attackerToVictim)
         {
             Vector3 attackDirection = attacker != null && attacker.ballController != null
-                ? attacker.ballController.CurrentMoveDirection
+                ? attacker.ballController.GetContactIntentDirection(attackerVelocity)
                 : GetHorizontalDirection(attackerVelocity);
 
             if (attackDirection.sqrMagnitude < 0.0001f)
@@ -2014,14 +2660,9 @@ namespace Sumo
             return Mathf.Max(0.01f, source._sphereCollider.radius * maxAxis);
         }
 
-        private static void ApplyImpulse(SumoCollisionController controller, Vector3 impulse)
+        private static void ApplyImpulse(SumoCollisionController controller, Vector3 impulse, SimulationMode mode)
         {
-            if (controller == null
-                || controller._rigidbody == null
-                || controller._rigidbody.isKinematic
-                || controller.Runner == null
-                || controller.Object == null
-                || !controller.Object.IsInSimulation)
+            if (!CanApplyGameplayForces(controller, mode))
             {
                 return;
             }
@@ -2031,32 +2672,17 @@ namespace Sumo
                 return;
             }
 
-            if (!controller.HasStateAuthority)
-            {
-                return;
-            }
-
             controller._rigidbody.AddForce(impulse, ForceMode.Impulse);
         }
 
-        private static void ApplyAcceleration(SumoCollisionController controller, Vector3 acceleration)
+        private static void ApplyAcceleration(SumoCollisionController controller, Vector3 acceleration, SimulationMode mode)
         {
-            if (controller == null
-                || controller._rigidbody == null
-                || controller._rigidbody.isKinematic
-                || controller.Runner == null
-                || controller.Object == null
-                || !controller.Object.IsInSimulation)
+            if (!CanApplyGameplayForces(controller, mode))
             {
                 return;
             }
 
             if (acceleration.sqrMagnitude <= 0.0000001f)
-            {
-                return;
-            }
-
-            if (!controller.HasStateAuthority)
             {
                 return;
             }
@@ -2130,6 +2756,99 @@ namespace Sumo
             }
 
             return controller.GetInstanceID();
+        }
+
+        private Vector3 GetVelocitySampleForTick(int tick)
+        {
+            if (_preSimVelocityTick == tick)
+            {
+                return _preSimVelocity;
+            }
+
+            return _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
+        }
+
+        private void CachePreSimVelocity(int currentTick)
+        {
+            if (_rigidbody == null)
+            {
+                return;
+            }
+
+            if (_preSimVelocityTick == currentTick)
+            {
+                return;
+            }
+
+            _preSimVelocity = _rigidbody.linearVelocity;
+            _preSimVelocityTick = currentTick;
+        }
+
+        private static void CaptureEnterSnapshot(
+            ref SumoRamState pairState,
+            SumoCollisionController first,
+            SumoCollisionController second,
+            int currentTick,
+            bool snapshotSelfIsFirst,
+            in ContactSnapshot snapshot)
+        {
+            if (first == null || second == null || first._rigidbody == null || second._rigidbody == null)
+            {
+                return;
+            }
+
+            Vector3 firstToSecond = ResolveDirection(
+                first._rigidbody.worldCenterOfMass,
+                second._rigidbody.worldCenterOfMass,
+                pairState.ContactNormal);
+
+            Vector3 firstVelocity = snapshotSelfIsFirst ? snapshot.SelfVelocity : snapshot.OtherVelocity;
+            Vector3 secondVelocity = snapshotSelfIsFirst ? snapshot.OtherVelocity : snapshot.SelfVelocity;
+
+            float firstApproachSpeed = GetApproachSpeed(first, firstVelocity, firstToSecond);
+            float secondApproachSpeed = GetApproachSpeed(second, secondVelocity, -firstToSecond);
+            float relativeClosing = Mathf.Max(0f, Vector3.Dot(firstVelocity - secondVelocity, firstToSecond));
+            relativeClosing = Mathf.Max(relativeClosing, snapshot.RelativeClosingSpeed);
+
+            pairState.EnterFirstApproachSpeed = firstApproachSpeed;
+            pairState.EnterSecondApproachSpeed = secondApproachSpeed;
+            pairState.EnterRelativeClosingSpeed = Mathf.Max(relativeClosing, Mathf.Max(firstApproachSpeed, secondApproachSpeed));
+            pairState.LastEnterTick = currentTick;
+            pairState.PendingEnterTick = currentTick;
+            pairState.HasPendingEnter = true;
+            pairState.BreakStartTick = 0;
+            pairState.MaxSeparationSinceBreak = 0f;
+        }
+
+        private void RegisterActiveController()
+        {
+            if (Runner == null)
+            {
+                return;
+            }
+
+            int key = GetControllerKey(this);
+            if (key == 0)
+            {
+                return;
+            }
+
+            ActiveControllers[key] = this;
+        }
+
+        private void UnregisterActiveController()
+        {
+            int key = GetControllerKey(this);
+            if (key == 0)
+            {
+                return;
+            }
+
+            ActiveControllers.Remove(key);
+            AuthorityBlockNormals.Remove(key);
+            PredictedBlockNormals.Remove(key);
+            RemoveStatesForController(key, PairStates);
+            RemoveStatesForController(key, PredictedPairStates);
         }
 
         private void CacheComponents()

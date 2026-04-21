@@ -17,6 +17,7 @@ namespace Sumo
     {
         [Header("Movement")]
         [SerializeField] private SumoAccelerationConfig accelerationConfig;
+        [SerializeField] private float movementSpeedMultiplier = DefaultMovementSpeedMultiplier;
         [SerializeField] private float airControlMultiplier = 0.12f;
         [SerializeField] private float airMaxSpeedMultiplier = 1f;
         [SerializeField] private float groundCheckDistance = 0.2f;
@@ -31,7 +32,7 @@ namespace Sumo
         [SerializeField] private Transform visualTarget;
 
         [Header("Network Physics")]
-        [SerializeField] private bool forceClientSimulationForRemotePlayers = true;
+        [SerializeField] private bool forceClientSimulationForRemotePlayers = false;
 
         [Header("Rigidbody")]
         [SerializeField] private float mass = 1f;
@@ -55,8 +56,6 @@ namespace Sumo
         private static Material _sharedRuntimeMaterial;
         private Vector3 _cachedWallNormal;
         private int _cachedWallTick = int.MinValue;
-        private Vector3 _cachedPlayerBlockNormal;
-        private int _cachedPlayerBlockTick = int.MinValue;
 
         private const float FallbackAntiBulldozeSpeedThreshold = 3.8f;
         private const float FallbackIntoPlayerAccelerationScale = 0.12f;
@@ -69,12 +68,28 @@ namespace Sumo
         private const float FallbackHardBrakeMultiplier = 1.8f;
         private const float FallbackRollingDrag = 1.1f;
         private const float FallbackSteeringResponsiveness = 9f;
-
-        private Vector3 _currentMoveDirection = Vector3.forward;
+        private const float DefaultMovementSpeedMultiplier = 1.5f;
+        private Vector3 _currentMoveDirection = Vector3.zero;
         private float _currentSpeed01;
         private bool _isDashing;
         private float _dashPower;
         private Tick _lastDashTick;
+        private MovementCommand _lastResolvedMovementCommand;
+        private bool _hasLastResolvedMovementCommand;
+        [Networked] private Vector3 ReplicatedMoveDirection { get; set; }
+        [Networked] private float ReplicatedMoveStrength01 { get; set; }
+        [Networked] private NetworkBool ReplicatedBrake { get; set; }
+        [Networked] private Vector3 ReplicatedContactIntent { get; set; }
+        [Networked] private float ReplicatedContactSpeed01 { get; set; }
+
+        private struct MovementCommand
+        {
+            public Vector3 TargetHorizontalVelocity;
+            public Vector3 MoveDirection;
+            public float MoveStrength01;
+            public bool HasMoveInput;
+            public bool HardBrake;
+        }
 
         public Transform CameraFollowTarget => visualTarget != null ? visualTarget : transform;
         public Vector3 CurrentVelocity => _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
@@ -101,20 +116,71 @@ namespace Sumo
         public Tick LastDashTick => _lastDashTick;
         public SumoBallPhysicsConfig PhysicsConfig => physicsConfig;
 
+        public Vector3 GetContactIntentDirection(Vector3 fallbackVelocity)
+        {
+            if (IsLocallyDrivenForContact() && _currentMoveDirection.sqrMagnitude > 0.0001f)
+            {
+                return _currentMoveDirection.normalized;
+            }
+
+            if (!IsLocallyDrivenForContact())
+            {
+                Vector3 replicatedIntent = new Vector3(ReplicatedMoveDirection.x, 0f, ReplicatedMoveDirection.z);
+                if (replicatedIntent.sqrMagnitude < 0.0001f)
+                {
+                    replicatedIntent = new Vector3(ReplicatedContactIntent.x, 0f, ReplicatedContactIntent.z);
+                }
+
+                if (replicatedIntent.sqrMagnitude > 0.0001f)
+                {
+                    return replicatedIntent.normalized;
+                }
+            }
+
+            Vector3 horizontalVelocity = new Vector3(fallbackVelocity.x, 0f, fallbackVelocity.z);
+            if (horizontalVelocity.sqrMagnitude > 0.0001f)
+            {
+                return horizontalVelocity.normalized;
+            }
+
+            return Vector3.zero;
+        }
+
+        public float GetContactPlanarSpeed(Vector3 fallbackVelocity)
+        {
+            Vector3 horizontalVelocity = new Vector3(fallbackVelocity.x, 0f, fallbackVelocity.z);
+            float speed = horizontalVelocity.magnitude;
+
+            if (!IsLocallyDrivenForContact())
+            {
+                float replicatedSpeed = Mathf.Clamp01(ReplicatedContactSpeed01) * Mathf.Max(0.01f, GetMaxSpeed());
+                float replicatedMoveSpeed = Mathf.Clamp01(ReplicatedMoveStrength01) * Mathf.Max(0.01f, GetMaxSpeed());
+                speed = Mathf.Max(speed, Mathf.Max(replicatedSpeed, replicatedMoveSpeed));
+                return speed;
+            }
+
+            float controllerSpeedEstimate = _currentSpeed01 * Mathf.Max(0.01f, GetMaxSpeed());
+            return Mathf.Max(speed, controllerSpeedEstimate);
+        }
+
         private void Awake()
         {
+            EnsurePresentationComponents();
             CacheComponents();
         }
 
         public override void Spawned()
         {
+            EnsurePresentationComponents();
             CacheComponents();
+            _lastResolvedMovementCommand = default;
+            _hasLastResolvedMovementCommand = false;
             ApplyRigidbodySettings();
             ConfigureInterpolationTarget();
             RefreshScaledRadius();
             EnsureVisibleRenderer();
 
-            if (forceClientSimulationForRemotePlayers
+            if (ShouldEnableRemoteProxySimulation()
                 && Runner != null
                 && Runner.IsClient
                 && Object != null
@@ -135,12 +201,7 @@ namespace Sumo
                 return;
             }
 
-            if (!HasStateAuthority && (!HasInputAuthority || !Object.IsInSimulation))
-            {
-                return;
-            }
-
-            if (!GetInput(out SumoInputData input))
+            if (!TryResolveMovementCommand(out MovementCommand command))
             {
                 return;
             }
@@ -151,26 +212,13 @@ namespace Sumo
                 return;
             }
 
-            Vector2 moveInput = input.Move;
-            if (moveInput.sqrMagnitude > 1f)
-            {
-                moveInput.Normalize();
-            }
-            else if (moveInput.sqrMagnitude < 0.0001f)
-            {
-                moveInput = Vector2.zero;
-            }
-
-            bool hasMoveInput = moveInput.sqrMagnitude > 0.0001f;
-            bool hardBrake = input.Buttons.IsSet((int)SumoInputButton.Brake);
+            bool hasMoveInput = command.HasMoveInput;
+            bool hardBrake = command.HardBrake;
             bool grounded = IsGrounded();
 
             Vector3 velocity = _rigidbody.linearVelocity;
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
-
-            Vector3 targetHorizontalVelocity = hasMoveInput
-                ? GetTargetHorizontalVelocity(moveInput, input.CameraYaw)
-                : Vector3.zero;
+            Vector3 targetHorizontalVelocity = command.TargetHorizontalVelocity;
 
             if (grounded && targetHorizontalVelocity.sqrMagnitude > 0.0001f)
             {
@@ -186,10 +234,20 @@ namespace Sumo
             }
 
             _currentSpeed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, GetMaxSpeed()));
+            PublishMovementCommandSnapshot(command);
 
             if (grounded)
             {
-                bool hasPlayerBlockContact = TryGetCachedPlayerBlockNormal(out Vector3 playerBlockNormal);
+                bool hasPlayerBlockContact = false;
+                Vector3 playerBlockNormal = Vector3.zero;
+
+                if (_collisionController != null
+                    && _collisionController.TryGetMovementBlockNormal(out Vector3 solverBlockNormal))
+                {
+                    hasPlayerBlockContact = true;
+                    playerBlockNormal = solverBlockNormal;
+                }
+
                 ApplyGroundMovement(
                     targetHorizontalVelocity,
                     horizontalVelocity,
@@ -226,13 +284,11 @@ namespace Sumo
         private void OnCollisionEnter(Collision collision)
         {
             CacheWallContactFromCollision(collision);
-            CachePlayerBlockFromCollision(collision);
         }
 
         private void OnCollisionStay(Collision collision)
         {
             CacheWallContactFromCollision(collision);
-            CachePlayerBlockFromCollision(collision);
         }
 
         private void ApplyGroundMovement(
@@ -289,25 +345,24 @@ namespace Sumo
                 ? physicsConfig.IntoPlayerAccelerationScale
                 : FallbackIntoPlayerAccelerationScale;
 
-            bool hasActiveRamDrive = _collisionController != null && _collisionController.HasActiveRamDrive();
-            bool shouldLimitIntoPlayer = !hasActiveRamDrive;
+            float ramDriveAssist = _collisionController != null
+                ? _collisionController.GetRamDriveAssist01()
+                : 0f;
             float effectiveIntoPlayerScale = intoPlayerScale;
-
-            if (!hasActiveRamDrive)
-            {
-                float antiBulldozeSpeedThreshold = physicsConfig != null
-                    ? physicsConfig.AntiBulldozeSpeedThreshold
-                    : FallbackAntiBulldozeSpeedThreshold;
-
-                float speed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, antiBulldozeSpeedThreshold));
-                float minIntoScale = Mathf.Max(0.02f, intoPlayerScale * 0.45f);
-                effectiveIntoPlayerScale = Mathf.Lerp(intoPlayerScale, minIntoScale, speed01);
-            }
+            float antiBulldozeSpeedThreshold = physicsConfig != null
+                ? physicsConfig.AntiBulldozeSpeedThreshold
+                : FallbackAntiBulldozeSpeedThreshold;
+            float speed01 = Mathf.Clamp01(horizontalVelocity.magnitude / Mathf.Max(0.01f, antiBulldozeSpeedThreshold));
+            float minIntoScale = Mathf.Max(0.02f, intoPlayerScale * 0.45f);
+            float antiBulldozeScale = Mathf.Lerp(intoPlayerScale, minIntoScale, speed01);
+            effectiveIntoPlayerScale = Mathf.Lerp(antiBulldozeScale, 1f, Mathf.Clamp01(ramDriveAssist));
 
             if (limitIntoPlayers
-                && hasPlayerBlockContact
-                && shouldLimitIntoPlayer)
+                && hasPlayerBlockContact)
             {
+                // The analytic collision solver owns player-vs-player separation later in
+                // the tick. Hard pre-clamping attacker velocity/acceleration here was
+                // using the previous tick's block state and reintroduced stop-go pushes.
                 requiredAcceleration = ScaleAccelerationIntoBlocker(requiredAcceleration, playerBlockNormal, effectiveIntoPlayerScale);
             }
 
@@ -441,7 +496,6 @@ namespace Sumo
             float removedAcceleration = intoBlockAcceleration * (1f - clampedScale);
             return accelerationVector + blockerNormal.normalized * removedAcceleration;
         }
-
         private void ApplyAdditionalFallForces(float verticalVelocity, bool hasWallContact)
         {
             if (verticalVelocity >= 0f)
@@ -486,26 +540,6 @@ namespace Sumo
             }
 
             wallNormal = _cachedWallNormal.normalized;
-            return true;
-        }
-
-        private bool TryGetCachedPlayerBlockNormal(out Vector3 playerBlockNormal)
-        {
-            playerBlockNormal = Vector3.zero;
-
-            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
-            long tickDelta = (long)currentTick - _cachedPlayerBlockTick;
-            if (tickDelta < 0L || tickDelta > 1L)
-            {
-                return false;
-            }
-
-            if (_cachedPlayerBlockNormal.sqrMagnitude < 0.0001f)
-            {
-                return false;
-            }
-
-            playerBlockNormal = _cachedPlayerBlockNormal.normalized;
             return true;
         }
 
@@ -570,60 +604,170 @@ namespace Sumo
             _cachedWallTick = tick;
         }
 
-        private void CachePlayerBlockFromCollision(Collision collision)
+        private bool IsLocallyDrivenForContact()
         {
-            if (collision == null || collision.contactCount <= 0)
+            return HasInputAuthority || HasStateAuthority;
+        }
+
+        public bool IsRemoteProxyPredictionActive()
+        {
+            return ShouldEnableRemoteProxySimulation()
+                && Runner != null
+                && Runner.IsClient
+                && !HasStateAuthority
+                && !HasInputAuthority
+                && Object != null
+                && Object.IsInSimulation;
+        }
+
+        private bool ShouldEnableRemoteProxySimulation()
+        {
+            if (forceClientSimulationForRemotePlayers)
             {
-                return;
+                return true;
             }
 
-            if (collision.rigidbody == null
-                || !collision.rigidbody.TryGetComponent(out SumoBallController _))
+            if (_collisionController == null)
             {
-                return;
+                CacheComponents();
             }
 
-            Vector3 accumulated = Vector3.zero;
-            for (int i = 0; i < collision.contactCount; i++)
+            return _collisionController != null && _collisionController.ShouldPredictRemoteProxyForces();
+        }
+
+        private bool TryResolveMovementCommand(out MovementCommand command)
+        {
+            command = default;
+
+            if (Runner == null || Object == null || !Object.IsInSimulation)
             {
-                Vector3 normal = collision.GetContact(i).normal;
-                if (normal.sqrMagnitude < 0.0001f)
+                return false;
+            }
+
+            if (HasStateAuthority || HasInputAuthority)
+            {
+                if (GetInput(out SumoInputData input))
                 {
-                    continue;
+                    BuildMovementCommandFromInput(input.Move, input.CameraYaw, input.Buttons.IsSet((int)SumoInputButton.Brake), out command);
+                    _lastResolvedMovementCommand = command;
+                    _hasLastResolvedMovementCommand = true;
+                    return true;
                 }
 
-                normal.Normalize();
-                Vector3 horizontalNormal = Vector3.ProjectOnPlane(normal, Vector3.up);
-                if (horizontalNormal.sqrMagnitude < 0.0001f)
+                if (_hasLastResolvedMovementCommand)
                 {
-                    continue;
+                    command = _lastResolvedMovementCommand;
+                    return true;
                 }
 
-                float weight = 1f - Mathf.Abs(normal.y);
-                if (weight <= 0f)
-                {
-                    continue;
-                }
-
-                accumulated += horizontalNormal.normalized * weight;
+                BuildMovementCommandFromInput(Vector2.zero, 0f, false, out command);
+                return true;
             }
 
-            if (accumulated.sqrMagnitude < 0.0001f)
+            if (!IsRemoteProxyPredictionActive())
             {
-                return;
+                return false;
             }
 
-            int tick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
-            if (_cachedPlayerBlockTick == tick)
+            BuildReplicatedMovementCommand(out command);
+            return true;
+        }
+
+        private void BuildMovementCommandFromInput(
+            Vector2 moveInput,
+            float cameraYaw,
+            bool hardBrake,
+            out MovementCommand command)
+        {
+            Vector2 clampedMoveInput = moveInput;
+            if (clampedMoveInput.sqrMagnitude > 1f)
             {
-                _cachedPlayerBlockNormal += accumulated;
+                clampedMoveInput.Normalize();
+            }
+            else if (clampedMoveInput.sqrMagnitude < 0.0001f)
+            {
+                clampedMoveInput = Vector2.zero;
+            }
+
+            bool hasMoveInput = clampedMoveInput.sqrMagnitude > 0.0001f;
+            Vector3 targetHorizontalVelocity = hasMoveInput
+                ? GetTargetHorizontalVelocity(clampedMoveInput, cameraYaw)
+                : Vector3.zero;
+
+            Vector3 moveDirection = targetHorizontalVelocity.sqrMagnitude > 0.0001f
+                ? targetHorizontalVelocity.normalized
+                : Vector3.zero;
+
+            float maxSpeed = Mathf.Max(0.01f, GetMaxSpeed());
+            float moveStrength01 = targetHorizontalVelocity.sqrMagnitude > 0.0001f
+                ? Mathf.Clamp01(targetHorizontalVelocity.magnitude / maxSpeed)
+                : 0f;
+
+            command = new MovementCommand
+            {
+                TargetHorizontalVelocity = targetHorizontalVelocity,
+                MoveDirection = moveDirection,
+                MoveStrength01 = moveStrength01,
+                HasMoveInput = hasMoveInput,
+                HardBrake = hardBrake
+            };
+        }
+
+        private void BuildReplicatedMovementCommand(out MovementCommand command)
+        {
+            Vector3 moveDirection = new Vector3(ReplicatedMoveDirection.x, 0f, ReplicatedMoveDirection.z);
+            if (moveDirection.sqrMagnitude < 0.0001f)
+            {
+                moveDirection = new Vector3(ReplicatedContactIntent.x, 0f, ReplicatedContactIntent.z);
+            }
+
+            if (moveDirection.sqrMagnitude > 0.0001f)
+            {
+                moveDirection.Normalize();
             }
             else
             {
-                _cachedPlayerBlockNormal = accumulated;
+                moveDirection = Vector3.zero;
             }
 
-            _cachedPlayerBlockTick = tick;
+            float moveStrength01 = Mathf.Clamp01(ReplicatedMoveStrength01);
+            bool hasMoveInput = moveDirection.sqrMagnitude > 0.0001f && moveStrength01 > 0.0001f;
+            Vector3 targetHorizontalVelocity = hasMoveInput
+                ? moveDirection * (Mathf.Max(0.01f, GetMaxSpeed()) * moveStrength01)
+                : Vector3.zero;
+
+            command = new MovementCommand
+            {
+                TargetHorizontalVelocity = targetHorizontalVelocity,
+                MoveDirection = moveDirection,
+                MoveStrength01 = moveStrength01,
+                HasMoveInput = hasMoveInput,
+                HardBrake = ReplicatedBrake
+            };
+        }
+
+        private void PublishMovementCommandSnapshot(in MovementCommand command)
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            Vector3 horizontalIntent = command.MoveDirection;
+            if (horizontalIntent.sqrMagnitude > 0.0001f)
+            {
+                horizontalIntent.Normalize();
+            }
+            else
+            {
+                horizontalIntent = Vector3.zero;
+            }
+
+            ReplicatedMoveDirection = horizontalIntent;
+            ReplicatedMoveStrength01 = Mathf.Clamp01(command.MoveStrength01);
+            ReplicatedBrake = command.HardBrake;
+            ReplicatedContactIntent = horizontalIntent;
+            ReplicatedContactSpeed01 = Mathf.Clamp01(_currentSpeed01);
         }
 
         private void CacheComponents()
@@ -664,6 +808,24 @@ namespace Sumo
             }
         }
 
+        private void EnsurePresentationComponents()
+        {
+            if (GetComponent<SumoProxyPresentation>() == null)
+            {
+                gameObject.AddComponent<SumoProxyPresentation>();
+            }
+
+            if (GetComponent<SumoImpactPresentation>() == null)
+            {
+                gameObject.AddComponent<SumoImpactPresentation>();
+            }
+
+            if (TryGetComponent(out SumoImpactFeedback legacyImpactFeedback))
+            {
+                legacyImpactFeedback.enabled = false;
+            }
+        }
+
         public void SetDashState(bool isDashing, float dashPower = 1f)
         {
             _isDashing = isDashing;
@@ -699,23 +861,26 @@ namespace Sumo
 
         private float GetMaxSpeed()
         {
-            return accelerationConfig != null
+            float baseMaxSpeed = accelerationConfig != null
                 ? accelerationConfig.MaxSpeed
                 : FallbackMaxSpeed;
+            return baseMaxSpeed * GetMovementSpeedMultiplier();
         }
 
         private float GetMinMoveSpeed()
         {
-            return accelerationConfig != null
+            float baseMinMoveSpeed = accelerationConfig != null
                 ? accelerationConfig.MinMoveSpeed
                 : FallbackMinMoveSpeed;
+            return baseMinMoveSpeed * GetMovementSpeedMultiplier();
         }
 
         private float GetInitialAccelerationResponse()
         {
-            return accelerationConfig != null
+            float baseAcceleration = accelerationConfig != null
                 ? accelerationConfig.InitialAccelerationResponse
                 : FallbackInitialAccelerationResponse;
+            return baseAcceleration * GetMovementSpeedMultiplier();
         }
 
         private float GetAccelerationPower()
@@ -734,9 +899,10 @@ namespace Sumo
 
         private float GetBraking()
         {
-            return accelerationConfig != null
+            float baseBraking = accelerationConfig != null
                 ? accelerationConfig.Braking
                 : FallbackBraking;
+            return baseBraking * GetMovementSpeedMultiplier();
         }
 
         private float GetHardBrakeMultiplier()
@@ -758,6 +924,14 @@ namespace Sumo
             return accelerationConfig != null
                 ? accelerationConfig.SteeringResponsiveness
                 : FallbackSteeringResponsiveness;
+        }
+
+        private float GetMovementSpeedMultiplier()
+        {
+            float configured = movementSpeedMultiplier > 0.0001f
+                ? movementSpeedMultiplier
+                : DefaultMovementSpeedMultiplier;
+            return Mathf.Max(0.01f, configured);
         }
 
         private Vector3 GetTargetHorizontalVelocity(Vector2 moveInput, float cameraYaw)
@@ -968,6 +1142,7 @@ namespace Sumo
 
         private void OnValidate()
         {
+            movementSpeedMultiplier = Mathf.Max(0.01f, movementSpeedMultiplier);
             airControlMultiplier = Mathf.Max(0f, airControlMultiplier);
             airMaxSpeedMultiplier = Mathf.Max(0f, airMaxSpeedMultiplier);
             groundCheckDistance = Mathf.Max(0f, groundCheckDistance);
