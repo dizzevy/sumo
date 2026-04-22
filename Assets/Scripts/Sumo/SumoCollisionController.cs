@@ -25,14 +25,30 @@ namespace Sumo
         [SerializeField] private bool enableClientPredictedRam = true;
         [SerializeField] private bool applyPredictedForcesToRemoteProxies = true;
 
+        [Header("Victim Local Catchup")]
+        [SerializeField] private bool enableVictimLocalCatchup = true;
+
         [Header("Debug")]
         [SerializeField] private bool logImpacts;
         [SerializeField] private bool logStateMachine;
 
         public event Action<SumoImpactData> ImpactApplied;
 
+        private const byte PushPhaseNone = 0;
+        private const byte PushPhaseImpact = 1;
+        private const byte PushPhaseRam = 2;
+
         [Networked] private int VictimPresentationSequence { get; set; }
         [Networked] private float VictimPresentationStrength { get; set; }
+        [Networked] private byte NetworkVictimPushPhase { get; set; }
+        [Networked] private int NetworkVictimPushSequence { get; set; }
+        [Networked] private int NetworkVictimPushStartTick { get; set; }
+        [Networked] private Vector3 NetworkVictimPushDirection { get; set; }
+        [Networked] private float NetworkVictimPushTargetSpeed { get; set; }
+        [Networked] private float NetworkVictimPushAcceleration { get; set; }
+        [Networked] private float NetworkVictimPushEnergy01 { get; set; }
+        [Networked] private float NetworkVictimPushAssist01 { get; set; }
+        [Networked] private float NetworkRamDriveAssist01 { get; set; }
 
         public int VictimPresentationSignalSequence
         {
@@ -148,6 +164,8 @@ namespace Sumo
         private static int _predictedCacheLastTick = int.MinValue;
         private static int _preSimVelocityCacheRunnerId = int.MinValue;
         private static int _preSimVelocityCacheTick = int.MinValue;
+        private static int _authorityEnvelopeResetRunnerId = int.MinValue;
+        private static int _authorityEnvelopeResetTick = int.MinValue;
 
         private const int FallbackContactBreakGraceTicks = 6;
         private const int FallbackReengageBreakTicks = 6;
@@ -236,20 +254,229 @@ namespace Sumo
 
             if (CanProcessAuthorityTick())
             {
+                EnsureAuthorityCombatFrame(currentTick);
                 CaptureAnalyticContactsForOwnedPairs(currentTick, PairStates, SimulationMode.Authoritative);
                 ProcessOwnedPairStates(currentTick, PairStates, SimulationMode.Authoritative);
                 PrunePairStates(currentTick, PairStates);
             }
 
-            if (CanProcessPredictedTick())
+            bool localVictimPresentationActive = IsLocalVictimPresentationActive();
+
+            if (localVictimPresentationActive)
+            {
+                ClearPredictedStateForLocalVictim();
+            }
+            else if (CanProcessPredictedTick())
             {
                 CaptureAnalyticContactsForOwnedPairs(currentTick, PredictedPairStates, SimulationMode.Predicted);
                 ProcessOwnedPairStates(currentTick, PredictedPairStates, SimulationMode.Predicted);
                 PrunePairStates(currentTick, PredictedPairStates);
                 StorePredictedFrame(currentTick);
             }
+
+            if (localVictimPresentationActive)
+            {
+                ApplyVictimLocalCatchup();
+            }
         }
 
+
+        private void EnsureAuthorityCombatFrame(int currentTick)
+        {
+            if (Runner == null)
+            {
+                return;
+            }
+
+            int runnerId = Runner.GetInstanceID();
+            if (_authorityEnvelopeResetRunnerId == runnerId && _authorityEnvelopeResetTick == currentTick)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<int, SumoCollisionController> entry in ActiveControllers)
+            {
+                SumoCollisionController controller = entry.Value;
+                if (controller == null || controller.Runner != Runner || !controller.HasStateAuthority)
+                {
+                    continue;
+                }
+
+                controller.BeginAuthorityCombatFrame();
+            }
+
+            _authorityEnvelopeResetRunnerId = runnerId;
+            _authorityEnvelopeResetTick = currentTick;
+        }
+
+        private void BeginAuthorityCombatFrame()
+        {
+            NetworkRamDriveAssist01 = 0f;
+            NetworkVictimPushAssist01 = 0f;
+            NetworkVictimPushPhase = PushPhaseNone;
+            NetworkVictimPushDirection = Vector3.zero;
+            NetworkVictimPushTargetSpeed = 0f;
+            NetworkVictimPushAcceleration = 0f;
+            NetworkVictimPushEnergy01 = 0f;
+        }
+
+        private bool IsLocalVictimPresentationActive()
+        {
+            return Runner != null
+                && Runner.IsClient
+                && HasInputAuthority
+                && !HasStateAuthority
+                && enableVictimLocalCatchup
+                && NetworkVictimPushPhase != PushPhaseNone;
+        }
+
+        private void ClearPredictedStateForLocalVictim()
+        {
+            int selfKey = GetControllerKey(this);
+            if (selfKey == 0)
+            {
+                return;
+            }
+
+            PredictedBlockNormals.Remove(selfKey);
+            RemoveStatesForController(selfKey, PredictedPairStates);
+
+            PairKeysBuffer.Clear();
+            foreach (KeyValuePair<long, int> pair in PredictedPairLastImpactTick)
+            {
+                long pairKey = pair.Key;
+                int firstKey = (int)(pairKey >> 32);
+                int secondKey = unchecked((int)(pairKey & 0xFFFFFFFF));
+                if (firstKey == selfKey || secondKey == selfKey)
+                {
+                    PairKeysBuffer.Add(pairKey);
+                }
+            }
+
+            for (int i = 0; i < PairKeysBuffer.Count; i++)
+            {
+                long pairKey = PairKeysBuffer[i];
+                PredictedPairLastImpactTick.Remove(pairKey);
+                PredictedPairLastContactTick.Remove(pairKey);
+            }
+
+            PairKeysBuffer.Clear();
+        }
+
+        private void ApplyVictimLocalCatchup()
+        {
+            if (_rigidbody == null || physicsConfig == null)
+            {
+                return;
+            }
+
+            byte phase = NetworkVictimPushPhase;
+            if (phase == PushPhaseNone)
+            {
+                return;
+            }
+
+            Vector3 direction = GetHorizontalDirection(NetworkVictimPushDirection);
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                direction = NetworkVictimPushDirection;
+            }
+
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            direction.Normalize();
+
+            float dt = Runner != null ? Runner.DeltaTime : Time.fixedDeltaTime;
+            if (dt <= 0f)
+            {
+                return;
+            }
+
+            float currentForwardSpeed = Vector3.Dot(_rigidbody.linearVelocity, direction);
+            float desiredForwardSpeed = Mathf.Max(
+                currentForwardSpeed,
+                NetworkVictimPushTargetSpeed * physicsConfig.VictimLocalPushPrediction);
+
+            float configuredCatchupAcceleration = phase == PushPhaseImpact
+                ? physicsConfig.VictimLocalImpactCatchupAcceleration
+                : physicsConfig.VictimLocalRamCatchupAcceleration;
+
+            float catchupAcceleration = Mathf.Max(
+                configuredCatchupAcceleration,
+                NetworkVictimPushAcceleration * physicsConfig.VictimLocalPushPrediction);
+
+            float nextForwardSpeed = Mathf.MoveTowards(
+                currentForwardSpeed,
+                desiredForwardSpeed,
+                catchupAcceleration * dt);
+
+            float positiveDeltaVCap = physicsConfig.VictimLocalPushMaxDeltaVPerTick;
+            if (phase == PushPhaseImpact)
+            {
+                positiveDeltaVCap = Mathf.Min(positiveDeltaVCap, physicsConfig.VictimLocalImpactMaxDeltaVPerTick);
+            }
+
+            float deltaV = nextForwardSpeed - currentForwardSpeed;
+            deltaV = Mathf.Clamp(
+                deltaV,
+                -physicsConfig.VictimLocalPushBrakeDeltaVPerTick,
+                positiveDeltaVCap);
+
+            if (Mathf.Abs(deltaV) <= 0.0001f)
+            {
+                return;
+            }
+
+            _rigidbody.AddForce(direction * deltaV, ForceMode.VelocityChange);
+        }
+
+        private void PublishRamDrive(SumoCollisionController attacker, float assist01)
+        {
+            if (attacker == null || !attacker.HasStateAuthority)
+            {
+                return;
+            }
+
+            attacker.NetworkRamDriveAssist01 = Mathf.Max(attacker.NetworkRamDriveAssist01, Mathf.Clamp01(assist01));
+        }
+
+        private void PublishVictimPush(
+            SumoCollisionController victim,
+            byte phase,
+            Vector3 direction,
+            float targetSpeed,
+            float acceleration,
+            float energy01,
+            int startTick)
+        {
+            if (victim == null || !victim.HasStateAuthority)
+            {
+                return;
+            }
+
+            float score = Mathf.Max(0f, targetSpeed) + Mathf.Clamp01(energy01) * 100f;
+            float currentScore = Mathf.Max(0f, victim.NetworkVictimPushTargetSpeed) + Mathf.Clamp01(victim.NetworkVictimPushEnergy01) * 100f;
+            if (victim.NetworkVictimPushPhase != PushPhaseNone && score + 0.001f < currentScore)
+            {
+                return;
+            }
+
+            if (phase == PushPhaseImpact && (victim.NetworkVictimPushPhase != PushPhaseImpact || victim.NetworkVictimPushStartTick != startTick))
+            {
+                victim.NetworkVictimPushSequence++;
+            }
+
+            victim.NetworkVictimPushPhase = phase;
+            victim.NetworkVictimPushStartTick = startTick;
+            victim.NetworkVictimPushDirection = direction;
+            victim.NetworkVictimPushTargetSpeed = Mathf.Max(0f, targetSpeed);
+            victim.NetworkVictimPushAcceleration = Mathf.Max(0f, acceleration);
+            victim.NetworkVictimPushEnergy01 = Mathf.Clamp01(energy01);
+            victim.NetworkVictimPushAssist01 = Mathf.Max(victim.NetworkVictimPushAssist01, Mathf.Clamp01(Mathf.Max(energy01, phase == PushPhaseImpact ? 1f : 0f)));
+        }
         private void EnsurePreSimVelocitySamples(int currentTick)
         {
             if (Runner == null)
@@ -296,6 +523,11 @@ namespace Sumo
         public float GetRamDriveAssist01()
         {
             if (Runner == null)
+            {
+                return 0f;
+            }
+
+            if (IsLocalVictimPresentationActive())
             {
                 return 0f;
             }
@@ -376,6 +608,11 @@ namespace Sumo
                 return 0f;
             }
 
+            if (IsLocalVictimPresentationActive())
+            {
+                return Mathf.Clamp01(NetworkVictimPushAssist01);
+            }
+
             Dictionary<long, SumoRamState> states = HasStateAuthority
                 ? PairStates
                 : PredictedPairStates;
@@ -448,6 +685,11 @@ namespace Sumo
         public bool TryGetMovementBlockNormal(out Vector3 playerBlockNormal)
         {
             playerBlockNormal = Vector3.zero;
+
+            if (IsLocalVictimPresentationActive())
+            {
+                return false;
+            }
 
             int controllerKey = GetControllerKey(this);
             if (controllerKey == 0)
@@ -1415,6 +1657,26 @@ namespace Sumo
                 {
                     victim.PublishVictimPresentationImpact(presentationStrength);
                 }
+
+                float energy01 = pairState.InitialRamEnergy > 0.0001f
+                    ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
+                    : 0f;
+
+                PublishRamDrive(attacker, Mathf.Max(energy01, 0.15f));
+
+                float desiredVictimSpeed = Mathf.Max(
+                    Vector3.Dot(victim._rigidbody.linearVelocity, liveDirection),
+                    Mathf.Max(0f, Vector3.Dot(attackerVelocity, liveDirection))
+                        * Mathf.Lerp(0.82f, 0.96f, Mathf.Clamp01(pairState.RamContactBlend)));
+
+                PublishVictimPush(
+                    victim,
+                    PushPhaseRam,
+                    liveDirection,
+                    desiredVictimSpeed,
+                    ramTick.VictimAcceleration,
+                    energy01,
+                    pairState.LastImpactTick);
             }
 
             bool outOfEnergy = pairState.RamEnergy <= GetRamStopThreshold(attacker);
@@ -1745,6 +2007,32 @@ namespace Sumo
 
                 float presentationStrength = ComputeVictimPresentationStrength(attacker, impactResult);
                 victim.PublishVictimPresentationImpact(presentationStrength);
+
+                PublishRamDrive(attacker, 1f);
+
+                Vector3 catchupDirection = GetHorizontalDirection(impulseDirection);
+                if (catchupDirection.sqrMagnitude < 0.0001f)
+                {
+                    catchupDirection = GetHorizontalDirection(attackerToVictim);
+                }
+
+                if (catchupDirection.sqrMagnitude < 0.0001f)
+                {
+                    catchupDirection = impulseDirection.normalized;
+                }
+
+                float impactTargetSpeed = Mathf.Max(
+                    Vector3.Dot(victim._rigidbody.linearVelocity, catchupDirection),
+                    attackerForwardSpeed * Mathf.Lerp(0.52f, 0.72f, Mathf.Clamp01(impactResult.SpeedCurve)));
+
+                PublishVictimPush(
+                    victim,
+                    PushPhaseImpact,
+                    catchupDirection,
+                    impactTargetSpeed,
+                    victim.physicsConfig != null ? victim.physicsConfig.VictimLocalImpactCatchupAcceleration : 24f,
+                    1f,
+                    currentTick);
 
                 attacker.ImpactApplied?.Invoke(impactData);
                 victim.ImpactApplied?.Invoke(impactData);

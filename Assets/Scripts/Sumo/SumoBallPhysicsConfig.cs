@@ -109,6 +109,14 @@ namespace Sumo
         [SerializeField] private float reengageDistance = 0.22f;
         [SerializeField] private float reengageSpeedThreshold = 4.8f;
 
+        [Header("Victim Local Catchup")]
+        [SerializeField] private float victimLocalPushPrediction = 0.92f;
+        [SerializeField] private float victimLocalPushMaxDeltaVPerTick = 0.22f;
+        [SerializeField] private float victimLocalPushBrakeDeltaVPerTick = 0.12f;
+        [SerializeField] private float victimLocalImpactCatchupAcceleration = 26f;
+        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.08f;
+        [SerializeField] private float victimLocalRamCatchupAcceleration = 18f;
+
         [Header("Anti-Bulldoze")]
         [SerializeField] private bool limitAccelerationIntoPlayers = true;
         [SerializeField] private float antiBulldozeSpeedThreshold = 3.8f;
@@ -182,6 +190,13 @@ namespace Sumo
         public int ReengageBreakTicks => reengageBreakTicks;
         public float ReengageDistance => reengageDistance;
         public float ReengageSpeedThreshold => reengageSpeedThreshold;
+
+        public float VictimLocalPushPrediction => victimLocalPushPrediction;
+        public float VictimLocalPushMaxDeltaVPerTick => victimLocalPushMaxDeltaVPerTick;
+        public float VictimLocalPushBrakeDeltaVPerTick => victimLocalPushBrakeDeltaVPerTick;
+        public float VictimLocalImpactCatchupAcceleration => victimLocalImpactCatchupAcceleration;
+        public float VictimLocalImpactMaxDeltaVPerTick => victimLocalImpactMaxDeltaVPerTick;
+        public float VictimLocalRamCatchupAcceleration => victimLocalRamCatchupAcceleration;
 
         public bool LimitAccelerationIntoPlayers => limitAccelerationIntoPlayers;
         public float AntiBulldozeSpeedThreshold => antiBulldozeSpeedThreshold;
@@ -295,6 +310,13 @@ namespace Sumo
             reengageBreakTicks = Mathf.Clamp(reengageBreakTicks, 4, 16);
             reengageDistance = Mathf.Clamp(reengageDistance, 0.16f, 0.4f);
             reengageSpeedThreshold = Mathf.Max(0f, reengageSpeedThreshold);
+
+            victimLocalPushPrediction = Mathf.Clamp(victimLocalPushPrediction, 0f, 1.25f);
+            victimLocalPushMaxDeltaVPerTick = Mathf.Clamp(victimLocalPushMaxDeltaVPerTick, 0.005f, 0.3f);
+            victimLocalPushBrakeDeltaVPerTick = Mathf.Clamp(victimLocalPushBrakeDeltaVPerTick, 0.005f, 0.2f);
+            victimLocalImpactCatchupAcceleration = Mathf.Clamp(victimLocalImpactCatchupAcceleration, 1f, 60f);
+            victimLocalImpactMaxDeltaVPerTick = Mathf.Clamp(victimLocalImpactMaxDeltaVPerTick, 0.01f, 0.35f);
+            victimLocalRamCatchupAcceleration = Mathf.Clamp(victimLocalRamCatchupAcceleration, 1f, 60f);
 
             antiBulldozeSpeedThreshold = Mathf.Max(0f, antiBulldozeSpeedThreshold);
             intoPlayerAccelerationScale = Mathf.Clamp01(intoPlayerAccelerationScale);
