@@ -297,6 +297,7 @@ namespace Sumo
             float lowPressureDecay = config != null ? config.RamPressureDecayPerSecond : 1.1f;
             float angleDecay = config != null ? config.RamAngleDecayPerSecond : 1.4f;
             float noPressureDecay = config != null ? config.RamNoPressureDecayPerSecond : 4f;
+            noPressureDecay = Mathf.Clamp(noPressureDecay, 0f, 3.6f);
             float accelerationEnergyCost = config != null ? config.RamAccelerationEnergyCost : 0.14f;
 
             float energyDecay = dt * baseDecay
@@ -311,7 +312,7 @@ namespace Sumo
 
             if (!isPressing)
             {
-                energyDecay += noPressureDecay * dt;
+                energyDecay += noPressureDecay * dt * 0.78f;
             }
 
             energyDecay = Mathf.Max(0f, energyDecay);

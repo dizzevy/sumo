@@ -38,8 +38,10 @@ namespace Sumo
         public int PendingEnterTick;
         public int BreakStartTick;
         public int ReengageReadyTick;
+        public int ImpactLatchTick;
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
+        public bool ReimpactSuppressedUntilHardBreak;
         public SumoPairState State;
         public SumoTieResolvedBy TieResolvedBy;
         public float EnterFirstApproachSpeed;

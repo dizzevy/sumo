@@ -313,8 +313,8 @@ MonoBehaviour:
   colliderContactOffset: 0.015
   minImpactSpeed: 2.2
   maxImpactSpeed: 10
-  baseImpactImpulse: 24
-  maxImpactImpulse: 40
+  baseImpactImpulse: 27
+  maxImpactImpulse: 44
   impactSpeedExponent: 1.65
   impactTopSpeedBonus: 1.35
   impactAngleExponent: 1.05
@@ -330,10 +330,15 @@ MonoBehaviour:
   dashImpactMultiplier: 1.45
   impactBurstDuration: 0.08
   firstImpactBurstFrontload: 0.62
-  firstImpactKickImpulseShare: 0.48
+  firstImpactKickImpulseShare: 0.6
   attackerTieSpeedEpsilon: 0.15
   resolveTieByLowerKey: 1
   contactBreakGraceTicks: 5
+  playerContactEnterPadding: 0.004
+  playerContactExitPadding: 0.02
+  playerContactPenetrationSlop: 0.01
+  playerContactPositionCorrection: 0.85
+  playerContactVelocityDamping: 1
   minRamStartSpeed: 3.3
   minRamPressureSpeed: 1.6
   maxRamDurationTicks: 34
@@ -359,6 +364,21 @@ MonoBehaviour:
   reengageBreakTicks: 4
   reengageDistance: 0.18
   reengageSpeedThreshold: 4.8
+  victimLocalPushPrediction: 1.02
+  victimLocalPushMaxDeltaVPerTick: 0.22
+  victimLocalPushBrakeDeltaVPerTick: 0.12
+  victimLocalImpactCatchupAcceleration: 42
+  victimLocalImpactMaxDeltaVPerTick: 0.16
+  victimLocalRamCatchupAcceleration: 30
+  victimAnticipationMinClosingSpeed: 0.95
+  victimAnticipationMinDirectionDot: 0.2
+  victimAnticipationImpactTicks: 2
+  victimAnticipationTtlTicks: 8
+  victimAnticipationContactLossTicks: 2
+  victimAnticipationHandoffTicks: 3
+  victimAnticipationTargetSpeedScale: 0.98
+  victimAnticipationImpactMaxDeltaVPerTick: 0.14
+  victimAnticipationRamMaxDeltaVPerTick: 0.1
   limitAccelerationIntoPlayers: 1
   antiBulldozeSpeedThreshold: 3.8
   intoPlayerAccelerationScale: 0.12

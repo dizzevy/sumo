@@ -6,6 +6,9 @@ namespace Sumo
     [DisallowMultipleComponent]
     public sealed class SumoVisualSmoothing : MonoBehaviour
     {
+        private const float EmergencyPositionSnapDistance = 25f;
+        private const float EmergencyRotationSnapDegrees = 170f;
+
         [Serializable]
         public struct PositionSettings
         {
@@ -48,29 +51,29 @@ namespace Sumo
                 {
                     Position = new PositionSettings
                     {
-                        DeadZone = 0.002f,
-                        SmallError = 0.03f,
-                        MediumError = 0.16f,
-                        SmallSharpness = 20f,
-                        MediumSharpness = 26f,
-                        LargeSharpness = 34f,
-                        SmallCatchUpSpeed = 8f,
-                        MediumCatchUpSpeed = 16f,
-                        LargeCatchUpSpeed = 34f,
-                        HardSnapDistance = 2.75f
+                        DeadZone = 0.0035f,
+                        SmallError = 0.08f,
+                        MediumError = 0.42f,
+                        SmallSharpness = 3.2f,
+                        MediumSharpness = 5.2f,
+                        LargeSharpness = 8.4f,
+                        SmallCatchUpSpeed = 2.4f,
+                        MediumCatchUpSpeed = 5.8f,
+                        LargeCatchUpSpeed = 14f,
+                        HardSnapDistance = 60f
                     },
                     Rotation = new RotationSettings
                     {
-                        DeadZoneDegrees = 0.2f,
-                        SmallErrorDegrees = 1.5f,
-                        MediumErrorDegrees = 7.5f,
-                        SmallSharpness = 18f,
-                        MediumSharpness = 24f,
-                        LargeSharpness = 30f,
-                        SmallCatchUpDegreesPerSecond = 140f,
-                        MediumCatchUpDegreesPerSecond = 280f,
-                        LargeCatchUpDegreesPerSecond = 620f,
-                        HardSnapDegrees = 130f
+                        DeadZoneDegrees = 0.5f,
+                        SmallErrorDegrees = 5f,
+                        MediumErrorDegrees = 24f,
+                        SmallSharpness = 2.8f,
+                        MediumSharpness = 4.4f,
+                        LargeSharpness = 7.8f,
+                        SmallCatchUpDegreesPerSecond = 30f,
+                        MediumCatchUpDegreesPerSecond = 78f,
+                        LargeCatchUpDegreesPerSecond = 210f,
+                        HardSnapDegrees = 350f
                     }
                 };
             }
@@ -81,29 +84,29 @@ namespace Sumo
                 {
                     Position = new PositionSettings
                     {
-                        DeadZone = 0.002f,
-                        SmallError = 0.04f,
-                        MediumError = 0.22f,
-                        SmallSharpness = 12f,
-                        MediumSharpness = 17f,
-                        LargeSharpness = 24f,
-                        SmallCatchUpSpeed = 6f,
-                        MediumCatchUpSpeed = 13f,
-                        LargeCatchUpSpeed = 30f,
-                        HardSnapDistance = 6.5f
+                        DeadZone = 0.004f,
+                        SmallError = 0.12f,
+                        MediumError = 0.60f,
+                        SmallSharpness = 2.6f,
+                        MediumSharpness = 4.2f,
+                        LargeSharpness = 7.2f,
+                        SmallCatchUpSpeed = 2f,
+                        MediumCatchUpSpeed = 5f,
+                        LargeCatchUpSpeed = 13f,
+                        HardSnapDistance = 70f
                     },
                     Rotation = new RotationSettings
                     {
-                        DeadZoneDegrees = 0.25f,
-                        SmallErrorDegrees = 2.2f,
-                        MediumErrorDegrees = 10f,
-                        SmallSharpness = 10f,
-                        MediumSharpness = 15f,
-                        LargeSharpness = 22f,
-                        SmallCatchUpDegreesPerSecond = 110f,
-                        MediumCatchUpDegreesPerSecond = 220f,
-                        LargeCatchUpDegreesPerSecond = 520f,
-                        HardSnapDegrees = 220f
+                        DeadZoneDegrees = 0.6f,
+                        SmallErrorDegrees = 6.5f,
+                        MediumErrorDegrees = 30f,
+                        SmallSharpness = 2.4f,
+                        MediumSharpness = 3.8f,
+                        LargeSharpness = 6.8f,
+                        SmallCatchUpDegreesPerSecond = 25f,
+                        MediumCatchUpDegreesPerSecond = 68f,
+                        LargeCatchUpDegreesPerSecond = 185f,
+                        HardSnapDegrees = 355f
                     }
                 };
             }
@@ -114,29 +117,29 @@ namespace Sumo
                 {
                     Position = new PositionSettings
                     {
-                        DeadZone = 0.003f,
-                        SmallError = 0.08f,
-                        MediumError = 0.42f,
-                        SmallSharpness = 4.5f,
-                        MediumSharpness = 7f,
-                        LargeSharpness = 12f,
-                        SmallCatchUpSpeed = 3.5f,
-                        MediumCatchUpSpeed = 8f,
-                        LargeCatchUpSpeed = 19f,
-                        HardSnapDistance = 20f
+                        DeadZone = 0.012f,
+                        SmallError = 0.40f,
+                        MediumError = 2.00f,
+                        SmallSharpness = 0.75f,
+                        MediumSharpness = 1.25f,
+                        LargeSharpness = 2.40f,
+                        SmallCatchUpSpeed = 0.55f,
+                        MediumCatchUpSpeed = 1.10f,
+                        LargeCatchUpSpeed = 3.20f,
+                        HardSnapDistance = 80f
                     },
                     Rotation = new RotationSettings
                     {
-                        DeadZoneDegrees = 0.3f,
-                        SmallErrorDegrees = 3.4f,
-                        MediumErrorDegrees = 16f,
-                        SmallSharpness = 4f,
-                        MediumSharpness = 6.5f,
-                        LargeSharpness = 11f,
-                        SmallCatchUpDegreesPerSecond = 65f,
-                        MediumCatchUpDegreesPerSecond = 135f,
-                        LargeCatchUpDegreesPerSecond = 320f,
-                        HardSnapDegrees = 320f
+                        DeadZoneDegrees = 1.8f,
+                        SmallErrorDegrees = 18f,
+                        MediumErrorDegrees = 80f,
+                        SmallSharpness = 0.70f,
+                        MediumSharpness = 1.20f,
+                        LargeSharpness = 2.20f,
+                        SmallCatchUpDegreesPerSecond = 12f,
+                        MediumCatchUpDegreesPerSecond = 28f,
+                        LargeCatchUpDegreesPerSecond = 85f,
+                        HardSnapDegrees = 359f
                     }
                 };
             }
@@ -147,29 +150,29 @@ namespace Sumo
                 {
                     Position = new PositionSettings
                     {
-                        DeadZone = 0.003f,
-                        SmallError = 0.1f,
-                        MediumError = 0.5f,
-                        SmallSharpness = 3.5f,
-                        MediumSharpness = 6f,
-                        LargeSharpness = 10f,
-                        SmallCatchUpSpeed = 3f,
-                        MediumCatchUpSpeed = 7f,
-                        LargeCatchUpSpeed = 17f,
-                        HardSnapDistance = 24f
+                        DeadZone = 0.004f,
+                        SmallError = 0.22f,
+                        MediumError = 1.10f,
+                        SmallSharpness = 1.2f,
+                        MediumSharpness = 2.3f,
+                        LargeSharpness = 4.5f,
+                        SmallCatchUpSpeed = 1f,
+                        MediumCatchUpSpeed = 2.4f,
+                        LargeCatchUpSpeed = 6.5f,
+                        HardSnapDistance = 90f
                     },
                     Rotation = new RotationSettings
                     {
-                        DeadZoneDegrees = 0.35f,
-                        SmallErrorDegrees = 4f,
-                        MediumErrorDegrees = 18f,
-                        SmallSharpness = 3.2f,
-                        MediumSharpness = 5.4f,
-                        LargeSharpness = 9.2f,
-                        SmallCatchUpDegreesPerSecond = 55f,
-                        MediumCatchUpDegreesPerSecond = 120f,
-                        LargeCatchUpDegreesPerSecond = 290f,
-                        HardSnapDegrees = 330f
+                        DeadZoneDegrees = 0.6f,
+                        SmallErrorDegrees = 9f,
+                        MediumErrorDegrees = 40f,
+                        SmallSharpness = 1.2f,
+                        MediumSharpness = 2.2f,
+                        LargeSharpness = 4.2f,
+                        SmallCatchUpDegreesPerSecond = 20f,
+                        MediumCatchUpDegreesPerSecond = 55f,
+                        LargeCatchUpDegreesPerSecond = 150f,
+                        HardSnapDegrees = 358f
                     }
                 };
             }
@@ -275,11 +278,9 @@ namespace Sumo
                 return;
             }
 
-            if (profile.Position.HardSnapDistance > 0f && error >= profile.Position.HardSnapDistance)
+            if (error >= EmergencyPositionSnapDistance)
             {
-                float fastCatchUpSpeed = Mathf.Max(profile.Position.LargeCatchUpSpeed * 2f, profile.Position.MediumCatchUpSpeed);
-                float fastStep = Mathf.Max(0.01f, fastCatchUpSpeed) * deltaTime;
-                visual.position = Vector3.MoveTowards(currentPosition, targetPosition, fastStep);
+                visual.position = targetPosition;
                 return;
             }
 
@@ -317,11 +318,9 @@ namespace Sumo
                 return;
             }
 
-            if (profile.Rotation.HardSnapDegrees > 0f && error >= profile.Rotation.HardSnapDegrees)
+            if (error >= EmergencyRotationSnapDegrees)
             {
-                float fastCatchUpDegrees = Mathf.Max(profile.Rotation.LargeCatchUpDegreesPerSecond * 2f, profile.Rotation.MediumCatchUpDegreesPerSecond);
-                float fastStepDegrees = Mathf.Max(1f, fastCatchUpDegrees) * deltaTime;
-                visual.rotation = Quaternion.RotateTowards(currentRotation, targetRotation, fastStepDegrees);
+                visual.rotation = targetRotation;
                 return;
             }
 

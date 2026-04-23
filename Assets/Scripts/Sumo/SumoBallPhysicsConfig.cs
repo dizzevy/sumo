@@ -61,8 +61,8 @@ namespace Sumo
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
         [SerializeField] private bool resolveTieByLowerKey = true;
         [SerializeField] private int contactBreakGraceTicks = 6;
-        [SerializeField] private float playerContactEnterPadding = 0.03f;
-        [SerializeField] private float playerContactExitPadding = 0.12f;
+        [SerializeField] private float playerContactEnterPadding = 0.004f;
+        [SerializeField] private float playerContactExitPadding = 0.02f;
         [SerializeField] private float playerContactPenetrationSlop = 0.01f;
         [SerializeField] private float playerContactPositionCorrection = 0.85f;
         [SerializeField] private float playerContactVelocityDamping = 1f;
@@ -110,12 +110,23 @@ namespace Sumo
         [SerializeField] private float reengageSpeedThreshold = 4.8f;
 
         [Header("Victim Local Catchup")]
-        [SerializeField] private float victimLocalPushPrediction = 0.92f;
+        [SerializeField] private float victimLocalPushPrediction = 1.02f;
         [SerializeField] private float victimLocalPushMaxDeltaVPerTick = 0.22f;
         [SerializeField] private float victimLocalPushBrakeDeltaVPerTick = 0.12f;
-        [SerializeField] private float victimLocalImpactCatchupAcceleration = 26f;
-        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.08f;
-        [SerializeField] private float victimLocalRamCatchupAcceleration = 18f;
+        [SerializeField] private float victimLocalImpactCatchupAcceleration = 42f;
+        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.16f;
+        [SerializeField] private float victimLocalRamCatchupAcceleration = 30f;
+
+        [Header("Victim Anticipation")]
+        [SerializeField] private float victimAnticipationMinClosingSpeed = 0.95f;
+        [SerializeField] private float victimAnticipationMinDirectionDot = 0.20f;
+        [SerializeField] private int victimAnticipationImpactTicks = 2;
+        [SerializeField] private int victimAnticipationTtlTicks = 8;
+        [SerializeField] private int victimAnticipationContactLossTicks = 2;
+        [SerializeField] private int victimAnticipationHandoffTicks = 3;
+        [SerializeField] private float victimAnticipationTargetSpeedScale = 0.98f;
+        [SerializeField] private float victimAnticipationImpactMaxDeltaVPerTick = 0.14f;
+        [SerializeField] private float victimAnticipationRamMaxDeltaVPerTick = 0.10f;
 
         [Header("Anti-Bulldoze")]
         [SerializeField] private bool limitAccelerationIntoPlayers = true;
@@ -197,6 +208,15 @@ namespace Sumo
         public float VictimLocalImpactCatchupAcceleration => victimLocalImpactCatchupAcceleration;
         public float VictimLocalImpactMaxDeltaVPerTick => victimLocalImpactMaxDeltaVPerTick;
         public float VictimLocalRamCatchupAcceleration => victimLocalRamCatchupAcceleration;
+        public float VictimAnticipationMinClosingSpeed => victimAnticipationMinClosingSpeed;
+        public float VictimAnticipationMinDirectionDot => victimAnticipationMinDirectionDot;
+        public int VictimAnticipationImpactTicks => victimAnticipationImpactTicks;
+        public int VictimAnticipationTtlTicks => victimAnticipationTtlTicks;
+        public int VictimAnticipationContactLossTicks => victimAnticipationContactLossTicks;
+        public int VictimAnticipationHandoffTicks => victimAnticipationHandoffTicks;
+        public float VictimAnticipationTargetSpeedScale => victimAnticipationTargetSpeedScale;
+        public float VictimAnticipationImpactMaxDeltaVPerTick => victimAnticipationImpactMaxDeltaVPerTick;
+        public float VictimAnticipationRamMaxDeltaVPerTick => victimAnticipationRamMaxDeltaVPerTick;
 
         public bool LimitAccelerationIntoPlayers => limitAccelerationIntoPlayers;
         public float AntiBulldozeSpeedThreshold => antiBulldozeSpeedThreshold;
@@ -278,8 +298,8 @@ namespace Sumo
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);
-            playerContactEnterPadding = Mathf.Clamp(playerContactEnterPadding, 0f, 0.25f);
-            playerContactExitPadding = Mathf.Clamp(playerContactExitPadding, playerContactEnterPadding, 0.4f);
+            playerContactEnterPadding = Mathf.Clamp(playerContactEnterPadding, 0f, 0.05f);
+            playerContactExitPadding = Mathf.Clamp(playerContactExitPadding, playerContactEnterPadding, 0.08f);
             playerContactPenetrationSlop = Mathf.Clamp(playerContactPenetrationSlop, 0f, 0.12f);
             playerContactPositionCorrection = Mathf.Clamp(playerContactPositionCorrection, 0f, 1f);
             playerContactVelocityDamping = Mathf.Clamp(playerContactVelocityDamping, 0f, 1.25f);
@@ -317,6 +337,15 @@ namespace Sumo
             victimLocalImpactCatchupAcceleration = Mathf.Clamp(victimLocalImpactCatchupAcceleration, 1f, 60f);
             victimLocalImpactMaxDeltaVPerTick = Mathf.Clamp(victimLocalImpactMaxDeltaVPerTick, 0.01f, 0.35f);
             victimLocalRamCatchupAcceleration = Mathf.Clamp(victimLocalRamCatchupAcceleration, 1f, 60f);
+            victimAnticipationMinClosingSpeed = Mathf.Clamp(victimAnticipationMinClosingSpeed, 0.05f, 20f);
+            victimAnticipationMinDirectionDot = Mathf.Clamp01(victimAnticipationMinDirectionDot);
+            victimAnticipationImpactTicks = Mathf.Clamp(victimAnticipationImpactTicks, 1, 6);
+            victimAnticipationTtlTicks = Mathf.Clamp(victimAnticipationTtlTicks, 2, 24);
+            victimAnticipationContactLossTicks = Mathf.Clamp(victimAnticipationContactLossTicks, 1, 8);
+            victimAnticipationHandoffTicks = Mathf.Clamp(victimAnticipationHandoffTicks, 1, 8);
+            victimAnticipationTargetSpeedScale = Mathf.Clamp(victimAnticipationTargetSpeedScale, 0.5f, 1.2f);
+            victimAnticipationImpactMaxDeltaVPerTick = Mathf.Clamp(victimAnticipationImpactMaxDeltaVPerTick, 0.01f, 0.4f);
+            victimAnticipationRamMaxDeltaVPerTick = Mathf.Clamp(victimAnticipationRamMaxDeltaVPerTick, 0.01f, 0.4f);
 
             antiBulldozeSpeedThreshold = Mathf.Max(0f, antiBulldozeSpeedThreshold);
             intoPlayerAccelerationScale = Mathf.Clamp01(intoPlayerAccelerationScale);

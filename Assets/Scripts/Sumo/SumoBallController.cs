@@ -59,6 +59,9 @@ namespace Sumo
 
         private const float FallbackAntiBulldozeSpeedThreshold = 3.8f;
         private const float FallbackIntoPlayerAccelerationScale = 0.12f;
+        private const float RamDriveAssistRisePerSecond = 14f;
+        private const float RamDriveAssistFallPerSecond = 5.5f;
+        private const float RamDriveAssistBypassThreshold = 0.42f;
         private const float FallbackMaxSpeed = 50f;
         private const float FallbackMinMoveSpeed = 4.5f;
         private const float FallbackInitialAccelerationResponse = 36f;
@@ -79,6 +82,7 @@ namespace Sumo
         private int _contactCommandTick = int.MinValue;
         private MovementCommand _contactCommandCache;
         private bool _hasContactCommandCache;
+        private float _smoothedRamDriveAssist01;
         [Networked] private Vector3 ReplicatedMoveDirection { get; set; }
         [Networked] private float ReplicatedMoveStrength01 { get; set; }
         [Networked] private NetworkBool ReplicatedBrake { get; set; }
@@ -191,6 +195,7 @@ namespace Sumo
             CacheComponents();
             _lastResolvedMovementCommand = default;
             _hasLastResolvedMovementCommand = false;
+            _smoothedRamDriveAssist01 = 0f;
             ApplyRigidbodySettings();
             ConfigureInterpolationTarget();
             RefreshScaledRadius();
@@ -361,9 +366,17 @@ namespace Sumo
                 ? physicsConfig.IntoPlayerAccelerationScale
                 : FallbackIntoPlayerAccelerationScale;
 
-            float ramDriveAssist = _collisionController != null
+            float rawRamDriveAssist = _collisionController != null
                 ? _collisionController.GetRamDriveAssist01()
                 : 0f;
+            float blendSpeed = rawRamDriveAssist >= _smoothedRamDriveAssist01
+                ? RamDriveAssistRisePerSecond
+                : RamDriveAssistFallPerSecond;
+            _smoothedRamDriveAssist01 = Mathf.MoveTowards(
+                _smoothedRamDriveAssist01,
+                Mathf.Clamp01(rawRamDriveAssist),
+                Mathf.Max(0.01f, blendSpeed) * deltaTime);
+            float ramDriveAssist = _smoothedRamDriveAssist01;
             float effectiveIntoPlayerScale = intoPlayerScale;
             float antiBulldozeSpeedThreshold = physicsConfig != null
                 ? physicsConfig.AntiBulldozeSpeedThreshold
@@ -372,6 +385,10 @@ namespace Sumo
             float minIntoScale = Mathf.Max(0.02f, intoPlayerScale * 0.45f);
             float antiBulldozeScale = Mathf.Lerp(intoPlayerScale, minIntoScale, speed01);
             effectiveIntoPlayerScale = Mathf.Lerp(antiBulldozeScale, 1f, Mathf.Clamp01(ramDriveAssist));
+            if (ramDriveAssist >= RamDriveAssistBypassThreshold)
+            {
+                effectiveIntoPlayerScale = 1f;
+            }
 
             if (limitIntoPlayers
                 && hasPlayerBlockContact)

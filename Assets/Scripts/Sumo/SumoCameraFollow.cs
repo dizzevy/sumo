@@ -29,7 +29,7 @@ namespace Sumo
         [SerializeField] private bool disableSceneMainCamera = true;
 
         [Header("Impact Shake")]
-        [SerializeField] private bool enableImpactShake = true;
+        [SerializeField] private bool enableImpactShake = false;
         [SerializeField] private float shakeDecayPerSecond = 3.2f;
         [SerializeField] private float shakeFrequency = 24f;
         [SerializeField] private float maxShakePosition = 0.15f;
@@ -41,7 +41,6 @@ namespace Sumo
         private AudioListener _audioListener;
         private Transform _resolvedFollowTarget;
         private bool _ownsCameraInstance;
-        private bool _cameraInitialized;
         private bool _wasLocalAuthority;
         private float _shakeTrauma;
         private float _shakeSeed;
@@ -56,13 +55,11 @@ namespace Sumo
 
         private void OnEnable()
         {
-            _cameraInitialized = false;
         }
 
         private void OnDisable()
         {
             ReleaseOwnedCamera();
-            _cameraInitialized = false;
             _wasLocalAuthority = false;
         }
 
@@ -99,7 +96,6 @@ namespace Sumo
             ClampParameters();
             ConfigureInputLook();
             _resolvedFollowTarget = null;
-            _cameraInitialized = false;
         }
 
         public void AddImpactShake(float normalizedStrength)
@@ -139,7 +135,6 @@ namespace Sumo
             {
                 ConfigureInputLook();
                 _resolvedFollowTarget = null;
-                _cameraInitialized = false;
             }
 
             if (_cameraInstance == null)
@@ -168,27 +163,10 @@ namespace Sumo
             Vector3 desiredPosition = pivot - targetRotation * Vector3.forward * distance;
             desiredPosition = ResolveCameraCollision(pivot, desiredPosition);
 
-            float positionBlend = 1f - Mathf.Exp(-Mathf.Max(0.01f, positionSmoothing) * Time.unscaledDeltaTime);
-            float rotationBlend = 1f - Mathf.Exp(-Mathf.Max(0.01f, rotationSmoothing) * Time.unscaledDeltaTime);
-
-            Transform cameraTransform = _cameraInstance.transform;
-            Vector3 smoothedPosition;
-            Quaternion smoothedRotation;
-
-            if (!_cameraInitialized)
-            {
-                smoothedPosition = desiredPosition;
-                smoothedRotation = targetRotation;
-                _cameraInitialized = true;
-            }
-            else
-            {
-                smoothedPosition = Vector3.Lerp(cameraTransform.position, desiredPosition, positionBlend);
-                smoothedRotation = Quaternion.Slerp(cameraTransform.rotation, targetRotation, rotationBlend);
-            }
-
-            ApplyShake(ref smoothedPosition, ref smoothedRotation);
-            cameraTransform.SetPositionAndRotation(smoothedPosition, smoothedRotation);
+            Vector3 cameraPosition = desiredPosition;
+            Quaternion cameraRotation = targetRotation;
+            ApplyShake(ref cameraPosition, ref cameraRotation);
+            _cameraInstance.transform.SetPositionAndRotation(cameraPosition, cameraRotation);
 
             _wasLocalAuthority = true;
         }
@@ -235,12 +213,6 @@ namespace Sumo
 
         private void ResolveFollowTarget()
         {
-            if (followTarget != null)
-            {
-                _resolvedFollowTarget = followTarget;
-                return;
-            }
-
             if (usePresentationTarget && TryGetComponent(out SumoProxyPresentation proxyPresentation))
             {
                 Transform target = proxyPresentation.CameraTarget;
@@ -249,6 +221,12 @@ namespace Sumo
                     _resolvedFollowTarget = target;
                     return;
                 }
+            }
+
+            if (followTarget != null)
+            {
+                _resolvedFollowTarget = followTarget;
+                return;
             }
 
             if (TryGetComponent(out SumoBallController ballController))
