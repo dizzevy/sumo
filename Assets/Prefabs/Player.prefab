@@ -312,25 +312,26 @@ MonoBehaviour:
   forceNonTriggerCollider: 1
   colliderContactOffset: 0.015
   minImpactSpeed: 2.2
+  impactActivationMinSpeed: 0.25
   maxImpactSpeed: 10
-  baseImpactImpulse: 27
-  maxImpactImpulse: 44
+  baseImpactImpulse: 42
+  maxImpactImpulse: 92
   impactSpeedExponent: 1.65
-  impactTopSpeedBonus: 1.35
+  impactTopSpeedBonus: 1.45
   impactAngleExponent: 1.05
-  headOnImpactMultiplier: 2.1
-  glancingImpactMultiplier: 0.35
-  relativeClosingBonus: 0.2
-  highSpeedReadableFloor: 0.55
+  headOnImpactMultiplier: 2.25
+  glancingImpactMultiplier: 0.3
+  relativeClosingBonus: 0.28
+  highSpeedReadableFloor: 0.62
   firstImpactArcadeThreshold01: 0.32
-  firstImpactArcadeBoost: 4.2
-  firstImpactArcadeCapBoost: 3.1
-  impactAttackerRecoilScale: 0.16
+  firstImpactArcadeBoost: 5.6
+  firstImpactArcadeCapBoost: 4.2
+  impactAttackerRecoilScale: 0.2
   impactVerticalLift: 0.02
-  dashImpactMultiplier: 1.45
-  impactBurstDuration: 0.08
-  firstImpactBurstFrontload: 0.62
-  firstImpactKickImpulseShare: 0.6
+  dashImpactMultiplier: 1.6
+  impactBurstDuration: 0.11
+  firstImpactBurstFrontload: 0.85
+  firstImpactKickImpulseShare: 0.97
   attackerTieSpeedEpsilon: 0.15
   resolveTieByLowerKey: 1
   contactBreakGraceTicks: 5
@@ -367,8 +368,8 @@ MonoBehaviour:
   victimLocalPushPrediction: 1.02
   victimLocalPushMaxDeltaVPerTick: 0.22
   victimLocalPushBrakeDeltaVPerTick: 0.12
-  victimLocalImpactCatchupAcceleration: 42
-  victimLocalImpactMaxDeltaVPerTick: 0.16
+  victimLocalImpactCatchupAcceleration: 72
+  victimLocalImpactMaxDeltaVPerTick: 0.32
   victimLocalRamCatchupAcceleration: 30
   victimAnticipationMinClosingSpeed: 0.95
   victimAnticipationMinDirectionDot: 0.2
@@ -377,7 +378,7 @@ MonoBehaviour:
   victimAnticipationContactLossTicks: 2
   victimAnticipationHandoffTicks: 3
   victimAnticipationTargetSpeedScale: 0.98
-  victimAnticipationImpactMaxDeltaVPerTick: 0.14
+  victimAnticipationImpactMaxDeltaVPerTick: 0.28
   victimAnticipationRamMaxDeltaVPerTick: 0.1
   limitAccelerationIntoPlayers: 1
   antiBulldozeSpeedThreshold: 3.8

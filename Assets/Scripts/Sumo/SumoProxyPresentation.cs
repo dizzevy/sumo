@@ -38,6 +38,10 @@ namespace Sumo
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localVictimProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyVictimProfile = default;
+        [SerializeField] private bool enableFirstImpactVisualLaunch = true;
+        [SerializeField] private float firstImpactVisualLaunchDuration = 0.14f;
+        [SerializeField] private float firstImpactVisualLaunchReleaseDuration = 0.18f;
+        [SerializeField] [Range(0f, 1f)] private float firstImpactVisualLaunchBlend = 1f;
 
         [Header("Victim Push Smoothing")]
         [SerializeField] private bool enableVictimPushSmoothing = true;
@@ -61,6 +65,17 @@ namespace Sumo
         [SerializeField] [Range(0f, 1f)] private float ultraVictimBlendLock = 1.00f;
         [SerializeField] private float ultraVictimContactHoldSeconds = 0.90f;
 
+        [Header("Remote Victim View Lock")]
+        [SerializeField] private bool enableRemoteVictimViewLock = true;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockActivationThreshold = 0.01f;
+        [SerializeField] private float remoteVictimViewLockMinDuration = 0.35f;
+        [SerializeField] private float remoteVictimViewLockMaxDuration = 1.40f;
+        [SerializeField] private float remoteVictimViewLockTailHold = 0.90f;
+        [SerializeField] private float remoteVictimViewLockRiseSpeed = 60f;
+        [SerializeField] private float remoteVictimViewLockFallSpeed = 0.25f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMinBlend = 0.97f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMaxBlend = 1.00f;
+
         [Header("Dedicated Server")]
         [SerializeField] private bool disablePresentationOnDedicatedServer = true;
 
@@ -76,6 +91,12 @@ namespace Sumo
         private float _nextCorrectionSpikeTriggerTime;
         private bool _wasLocalVictimCatchupActive;
         private float _localVictimContactUntil;
+        private float _impactVisualLaunchUntil;
+        private float _impactVisualLaunchReleaseUntil;
+        private float _remoteVictimViewLockUntil;
+        private float _remoteVictimViewLockBlend;
+        private float _remoteVictimViewLockTargetBlend;
+        private bool _wasRemoteVictimViewSignalActive;
 
         public Transform VisualShell => visualShell != null ? visualShell : transform;
         public Transform InterpolationAnchor => interpolationAnchor != null ? interpolationAnchor : transform;
@@ -107,6 +128,12 @@ namespace Sumo
             _nextCorrectionSpikeTriggerTime = 0f;
             _wasLocalVictimCatchupActive = false;
             _localVictimContactUntil = 0f;
+            _impactVisualLaunchUntil = 0f;
+            _impactVisualLaunchReleaseUntil = 0f;
+            _remoteVictimViewLockUntil = 0f;
+            _remoteVictimViewLockBlend = 0f;
+            _remoteVictimViewLockTargetBlend = 0f;
+            _wasRemoteVictimViewSignalActive = false;
         }
 
         private void OnDisable()
@@ -121,6 +148,12 @@ namespace Sumo
             _nextCorrectionSpikeTriggerTime = 0f;
             _wasLocalVictimCatchupActive = false;
             _localVictimContactUntil = 0f;
+            _impactVisualLaunchUntil = 0f;
+            _impactVisualLaunchReleaseUntil = 0f;
+            _remoteVictimViewLockUntil = 0f;
+            _remoteVictimViewLockBlend = 0f;
+            _remoteVictimViewLockTargetBlend = 0f;
+            _wasRemoteVictimViewSignalActive = false;
         }
 
         private void LateUpdate()
@@ -138,6 +171,7 @@ namespace Sumo
             }
 
             bool localPresentation = IsLocalPresentation();
+            UpdateRemoteVictimViewLock(localPresentation);
             TryTriggerVictimSmoothingFromLocalCatchupEdge(localPresentation);
             TryTriggerVictimSmoothingFromNetworkSignal(localPresentation);
             TryMaintainVictimSmoothingFromActivePush(localPresentation);
@@ -216,6 +250,7 @@ namespace Sumo
 
             visualSmoothing.SetTargets(interpolationAnchor, visualShell, true);
             bool localPresentation = IsLocalPresentation();
+            UpdateRemoteVictimViewLock(localPresentation, true);
             UpdateVictimBlend(localPresentation);
             bool directLocalMode = ShouldUseDirectPresentationMode(localPresentation, _victimBlend);
             ApplyPresentationMode(localPresentation, directLocalMode, true);
@@ -478,12 +513,32 @@ namespace Sumo
 
             SumoVisualSmoothing.SmoothingProfile baseProfile = localPresentation ? localProfile : proxyProfile;
             SumoVisualSmoothing.SmoothingProfile victimProfile = localPresentation ? localVictimProfile : proxyVictimProfile;
+            float remoteVictimViewLockBlend = GetRemoteVictimViewLockBlend(localPresentation);
             float effectiveBlend = Mathf.Max(
                 _victimBlend,
                 Mathf.Max(
                     GetPersistentRemoteBlend(localPresentation),
-                    GetActiveRemoteVictimBlend(localPresentation)));
+                    Mathf.Max(
+                        GetActiveRemoteVictimBlend(localPresentation),
+                        remoteVictimViewLockBlend)));
             SumoVisualSmoothing.SmoothingProfile activeProfile = LerpProfile(baseProfile, victimProfile, effectiveBlend);
+            if (!localPresentation && remoteVictimViewLockBlend > 0f)
+            {
+                float cinematicBlend = Mathf.InverseLerp(
+                    Mathf.Max(0.0001f, remoteVictimViewLockMinBlend),
+                    Mathf.Max(remoteVictimViewLockMinBlend + 0.0001f, remoteVictimViewLockMaxBlend),
+                    remoteVictimViewLockBlend);
+                SumoVisualSmoothing.SmoothingProfile cinematicProfile =
+                    SumoVisualSmoothing.SmoothingProfile.CreateProxyVictimCinematicDefault();
+                activeProfile = LerpProfile(activeProfile, cinematicProfile, cinematicBlend);
+            }
+
+            float impactLaunchBlend = GetImpactVisualLaunchBlend();
+            if (impactLaunchBlend > 0f)
+            {
+                activeProfile = LerpProfile(activeProfile, CreateFirstImpactLaunchProfile(localPresentation), impactLaunchBlend);
+            }
+
             visualSmoothing.SetProfile(activeProfile, snapNow);
         }
 
@@ -491,6 +546,11 @@ namespace Sumo
         {
             if (!localPresentation)
             {
+                if (IsRemoteVictimViewLockActive(localPresentation))
+                {
+                    return false;
+                }
+
                 // On host/client the remote player's authoritative body can look much
                 // harsher than a normal client proxy during shoves. Keep that branch on
                 // the interpolation anchor full-time so both sides get the same visual
@@ -564,6 +624,109 @@ namespace Sumo
             float minBlend = Mathf.Max(authoritativeRemoteBaseBlend, remoteVictimPushMinBlend);
             float maxBlend = Mathf.Max(minBlend, remoteVictimPushMaxBlend);
             return Mathf.Lerp(minBlend, maxBlend, Mathf.Clamp01(pushAssist));
+        }
+
+        private void UpdateRemoteVictimViewLock(bool localPresentation, bool snapNow = false)
+        {
+            if (localPresentation || !enableRemoteVictimViewLock)
+            {
+                if (snapNow)
+                {
+                    _remoteVictimViewLockUntil = 0f;
+                    _remoteVictimViewLockBlend = 0f;
+                    _remoteVictimViewLockTargetBlend = 0f;
+                }
+
+                _wasRemoteVictimViewSignalActive = false;
+                return;
+            }
+
+            float now = Time.unscaledTime;
+            float assist01 = 0f;
+            bool hasSignal = networkObject != null
+                && networkObject.Runner != null
+                && SumoCollisionController.TryGetLocalVictimPresentationAssist(networkObject.Runner, out assist01)
+                && assist01 > remoteVictimViewLockActivationThreshold;
+
+            if (hasSignal)
+            {
+                float signalStrength = Mathf.InverseLerp(
+                    remoteVictimViewLockActivationThreshold,
+                    1f,
+                    Mathf.Clamp01(assist01));
+                float lockBlend = Mathf.Lerp(
+                    remoteVictimViewLockMinBlend,
+                    remoteVictimViewLockMaxBlend,
+                    signalStrength);
+                float lockDuration = Mathf.Lerp(
+                    remoteVictimViewLockMinDuration,
+                    remoteVictimViewLockMaxDuration,
+                    signalStrength);
+
+                _remoteVictimViewLockTargetBlend = Mathf.Max(_remoteVictimViewLockTargetBlend, lockBlend);
+                _remoteVictimViewLockUntil = Mathf.Max(
+                    _remoteVictimViewLockUntil,
+                    now + Mathf.Max(0.01f, lockDuration));
+            }
+            else if (_wasRemoteVictimViewSignalActive)
+            {
+                _remoteVictimViewLockUntil = Mathf.Max(
+                    _remoteVictimViewLockUntil,
+                    now + Mathf.Max(0f, remoteVictimViewLockTailHold));
+            }
+
+            _wasRemoteVictimViewSignalActive = hasSignal;
+
+            bool activeWindow = hasSignal || now < _remoteVictimViewLockUntil;
+            float desiredBlend = activeWindow
+                ? Mathf.Clamp(
+                    Mathf.Max(_remoteVictimViewLockTargetBlend, remoteVictimViewLockMinBlend),
+                    remoteVictimViewLockMinBlend,
+                    remoteVictimViewLockMaxBlend)
+                : 0f;
+
+            float speed = desiredBlend >= _remoteVictimViewLockBlend
+                ? Mathf.Max(0.01f, remoteVictimViewLockRiseSpeed)
+                : Mathf.Max(0.01f, remoteVictimViewLockFallSpeed);
+
+            if (snapNow)
+            {
+                _remoteVictimViewLockBlend = desiredBlend;
+            }
+            else
+            {
+                _remoteVictimViewLockBlend = Mathf.MoveTowards(
+                    _remoteVictimViewLockBlend,
+                    desiredBlend,
+                    speed * Mathf.Max(0.0001f, Time.unscaledDeltaTime));
+            }
+
+            if (!activeWindow && _remoteVictimViewLockBlend <= victimBlendResetThreshold)
+            {
+                _remoteVictimViewLockBlend = 0f;
+                _remoteVictimViewLockTargetBlend = 0f;
+                _remoteVictimViewLockUntil = 0f;
+            }
+        }
+
+        private bool IsRemoteVictimViewLockActive(bool localPresentation)
+        {
+            return !localPresentation
+                && enableRemoteVictimViewLock
+                && (_remoteVictimViewLockBlend > victimBlendResetThreshold
+                    || Time.unscaledTime < _remoteVictimViewLockUntil);
+        }
+
+        private float GetRemoteVictimViewLockBlend(bool localPresentation)
+        {
+            if (!IsRemoteVictimViewLockActive(localPresentation))
+            {
+                return 0f;
+            }
+
+            float lowerBound = Mathf.Clamp01(remoteVictimViewLockMinBlend);
+            float upperBound = Mathf.Clamp01(Mathf.Max(lowerBound, remoteVictimViewLockMaxBlend));
+            return Mathf.Clamp(Mathf.Max(_remoteVictimViewLockBlend, lowerBound), lowerBound, upperBound);
         }
 
         private void UpdateVictimBlend(bool localPresentation)
@@ -658,6 +821,7 @@ namespace Sumo
                 {
                     float initialSignalStrength = collisionController.VictimPresentationSignalStrength;
                     TriggerVictimSmoothing(initialSignalStrength);
+                    TriggerFirstImpactVisualLaunch(initialSignalStrength);
                 }
                 return;
             }
@@ -670,6 +834,7 @@ namespace Sumo
             _lastVictimSignalSequence = signalSequence;
             float networkSignalStrength = collisionController.VictimPresentationSignalStrength;
             TriggerVictimSmoothing(networkSignalStrength);
+            TriggerFirstImpactVisualLaunch(networkSignalStrength);
         }
 
         private void TryTriggerVictimSmoothingFromLocalCatchupEdge(bool localPresentation)
@@ -691,6 +856,7 @@ namespace Sumo
             if (!_wasLocalVictimCatchupActive && localCatchupActive)
             {
                 TriggerVictimSmoothing(1f);
+                TriggerFirstImpactVisualLaunch(Mathf.Max(0.7f, localCatchupAssist));
             }
 
             if (localCatchupActive)
@@ -843,6 +1009,52 @@ namespace Sumo
             _victimSmoothingUntil = Mathf.Max(_victimSmoothingUntil, Time.unscaledTime + sustainWindow);
         }
 
+        private void TriggerFirstImpactVisualLaunch(float normalizedStrength)
+        {
+            if (!enableFirstImpactVisualLaunch)
+            {
+                return;
+            }
+
+            float clamped = Mathf.Clamp01(normalizedStrength);
+            if (clamped <= 0f)
+            {
+                return;
+            }
+
+            float now = Time.unscaledTime;
+            float launchDuration = Mathf.Max(0.02f, firstImpactVisualLaunchDuration);
+            float releaseDuration = Mathf.Max(0.02f, firstImpactVisualLaunchReleaseDuration);
+            float launchUntil = now + launchDuration;
+
+            _impactVisualLaunchUntil = Mathf.Max(_impactVisualLaunchUntil, launchUntil);
+            _impactVisualLaunchReleaseUntil = Mathf.Max(_impactVisualLaunchReleaseUntil, _impactVisualLaunchUntil + releaseDuration);
+        }
+
+        private float GetImpactVisualLaunchBlend()
+        {
+            if (!enableFirstImpactVisualLaunch)
+            {
+                return 0f;
+            }
+
+            float now = Time.unscaledTime;
+            float launchBlend = Mathf.Clamp01(firstImpactVisualLaunchBlend);
+            if (now < _impactVisualLaunchUntil)
+            {
+                return launchBlend;
+            }
+
+            if (now >= _impactVisualLaunchReleaseUntil)
+            {
+                return 0f;
+            }
+
+            float releaseDuration = Mathf.Max(0.02f, _impactVisualLaunchReleaseUntil - _impactVisualLaunchUntil);
+            float release01 = Mathf.Clamp01((_impactVisualLaunchReleaseUntil - now) / releaseDuration);
+            return launchBlend * release01;
+        }
+
         private void TouchLocalVictimContactHold()
         {
             if (!IsLocalPresentation())
@@ -928,6 +1140,72 @@ namespace Sumo
             {
                 Position = LerpPosition(from.Position, to.Position, blend),
                 Rotation = LerpRotation(from.Rotation, to.Rotation, blend)
+            };
+        }
+
+        private static SumoVisualSmoothing.SmoothingProfile CreateFirstImpactLaunchProfile(bool localPresentation)
+        {
+            if (localPresentation)
+            {
+                return new SumoVisualSmoothing.SmoothingProfile
+                {
+                    Position = new SumoVisualSmoothing.PositionSettings
+                    {
+                        DeadZone = 0.002f,
+                        SmallError = 0.08f,
+                        MediumError = 0.55f,
+                        SmallSharpness = 6.5f,
+                        MediumSharpness = 9.5f,
+                        LargeSharpness = 14f,
+                        SmallCatchUpSpeed = 6f,
+                        MediumCatchUpSpeed = 13f,
+                        LargeCatchUpSpeed = 28f,
+                        HardSnapDistance = 80f
+                    },
+                    Rotation = new SumoVisualSmoothing.RotationSettings
+                    {
+                        DeadZoneDegrees = 0.4f,
+                        SmallErrorDegrees = 6f,
+                        MediumErrorDegrees = 28f,
+                        SmallSharpness = 5f,
+                        MediumSharpness = 8f,
+                        LargeSharpness = 12f,
+                        SmallCatchUpDegreesPerSecond = 70f,
+                        MediumCatchUpDegreesPerSecond = 150f,
+                        LargeCatchUpDegreesPerSecond = 320f,
+                        HardSnapDegrees = 350f
+                    }
+                };
+            }
+
+            return new SumoVisualSmoothing.SmoothingProfile
+            {
+                Position = new SumoVisualSmoothing.PositionSettings
+                {
+                    DeadZone = 0.0025f,
+                    SmallError = 0.10f,
+                    MediumError = 0.65f,
+                    SmallSharpness = 5.8f,
+                    MediumSharpness = 8.4f,
+                    LargeSharpness = 12.5f,
+                    SmallCatchUpSpeed = 5f,
+                    MediumCatchUpSpeed = 11f,
+                    LargeCatchUpSpeed = 24f,
+                    HardSnapDistance = 90f
+                },
+                Rotation = new SumoVisualSmoothing.RotationSettings
+                {
+                    DeadZoneDegrees = 0.45f,
+                    SmallErrorDegrees = 7f,
+                    MediumErrorDegrees = 32f,
+                    SmallSharpness = 4.6f,
+                    MediumSharpness = 7.2f,
+                    LargeSharpness = 11f,
+                    SmallCatchUpDegreesPerSecond = 60f,
+                    MediumCatchUpDegreesPerSecond = 130f,
+                    LargeCatchUpDegreesPerSecond = 280f,
+                    HardSnapDegrees = 355f
+                }
             };
         }
 
@@ -1067,12 +1345,28 @@ namespace Sumo
             victimBlendFallSpeed = Mathf.Max(0.01f, victimBlendFallSpeed);
             victimBlendFloor = Mathf.Clamp01(victimBlendFloor);
             victimBlendResetThreshold = Mathf.Clamp(victimBlendResetThreshold, 0f, 0.5f);
+            firstImpactVisualLaunchDuration = Mathf.Max(0.02f, firstImpactVisualLaunchDuration);
+            firstImpactVisualLaunchReleaseDuration = Mathf.Max(0.02f, firstImpactVisualLaunchReleaseDuration);
+            firstImpactVisualLaunchBlend = Mathf.Clamp01(firstImpactVisualLaunchBlend);
             authoritativeRemoteBaseBlend = Mathf.Clamp01(authoritativeRemoteBaseBlend);
             remoteVictimPushMinBlend = Mathf.Clamp01(remoteVictimPushMinBlend);
             remoteVictimPushMaxBlend = Mathf.Clamp01(remoteVictimPushMaxBlend);
             if (remoteVictimPushMaxBlend < remoteVictimPushMinBlend)
             {
                 remoteVictimPushMaxBlend = remoteVictimPushMinBlend;
+            }
+
+            remoteVictimViewLockActivationThreshold = Mathf.Clamp01(remoteVictimViewLockActivationThreshold);
+            remoteVictimViewLockMinDuration = Mathf.Max(0.01f, remoteVictimViewLockMinDuration);
+            remoteVictimViewLockMaxDuration = Mathf.Max(remoteVictimViewLockMinDuration, remoteVictimViewLockMaxDuration);
+            remoteVictimViewLockTailHold = Mathf.Max(0f, remoteVictimViewLockTailHold);
+            remoteVictimViewLockRiseSpeed = Mathf.Max(0.01f, remoteVictimViewLockRiseSpeed);
+            remoteVictimViewLockFallSpeed = Mathf.Max(0.01f, remoteVictimViewLockFallSpeed);
+            remoteVictimViewLockMinBlend = Mathf.Clamp01(remoteVictimViewLockMinBlend);
+            remoteVictimViewLockMaxBlend = Mathf.Clamp01(remoteVictimViewLockMaxBlend);
+            if (remoteVictimViewLockMaxBlend < remoteVictimViewLockMinBlend)
+            {
+                remoteVictimViewLockMaxBlend = remoteVictimViewLockMinBlend;
             }
 
             ultraVictimBlendMin = Mathf.Clamp01(ultraVictimBlendMin);

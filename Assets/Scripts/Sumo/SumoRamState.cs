@@ -39,6 +39,8 @@ namespace Sumo
         public int BreakStartTick;
         public int ReengageReadyTick;
         public int ImpactLatchTick;
+        public int ImpactRamUnlockTick;
+        public int ImpactBurstGraceUntilTick;
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
         public bool ReimpactSuppressedUntilHardBreak;

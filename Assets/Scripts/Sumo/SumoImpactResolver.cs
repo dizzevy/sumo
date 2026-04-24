@@ -86,6 +86,7 @@ namespace Sumo
     public static class SumoImpactResolver
     {
         private const float DefaultMinImpactSpeed = 2.2f;
+        private const float DefaultImpactActivationMinSpeed = 0.25f;
         private const float DefaultMaxImpactSpeed = 10f;
 
         public static SumoAttackerDecision ResolveAttacker(
@@ -131,10 +132,14 @@ namespace Sumo
             float attackerReferenceTopSpeed = 0f)
         {
             float minImpactSpeed = config != null ? config.MinImpactSpeed : DefaultMinImpactSpeed;
-            float maxImpactSpeed = ResolveReferenceTopSpeed(config, minImpactSpeed, attackerReferenceTopSpeed);
+            float activationMinSpeed = config != null
+                ? config.ImpactActivationMinSpeed
+                : DefaultImpactActivationMinSpeed;
+            float lowerBound = Mathf.Min(minImpactSpeed, activationMinSpeed);
+            float maxImpactSpeed = ResolveReferenceTopSpeed(config, lowerBound, attackerReferenceTopSpeed);
             float speed01 = Mathf.InverseLerp(
-                minImpactSpeed,
-                Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed),
+                lowerBound,
+                Mathf.Max(lowerBound + 0.01f, maxImpactSpeed),
                 attackerForwardSpeed);
 
             speed01 = Mathf.Clamp01(speed01);
@@ -155,54 +160,63 @@ namespace Sumo
             float dashMultiplier)
         {
             float minImpactSpeed = config != null ? config.MinImpactSpeed : DefaultMinImpactSpeed;
-            if (attackerForwardSpeed < minImpactSpeed)
+            float activationMinSpeed = config != null
+                ? config.ImpactActivationMinSpeed
+                : DefaultImpactActivationMinSpeed;
+            float lowerBound = Mathf.Min(minImpactSpeed, activationMinSpeed);
+            if (attackerForwardSpeed < activationMinSpeed)
             {
                 return default;
             }
 
-            float maxImpactSpeed = ResolveReferenceTopSpeed(config, minImpactSpeed, attackerReferenceTopSpeed);
+            float maxImpactSpeed = ResolveReferenceTopSpeed(config, lowerBound, attackerReferenceTopSpeed);
             float speedCurve = EvaluateSpeedCurve(config, attackerForwardSpeed, maxImpactSpeed);
             float speedCurve01 = Mathf.Clamp01(speedCurve);
             float speed01 = Mathf.InverseLerp(
-                minImpactSpeed,
-                Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed),
+                lowerBound,
+                Mathf.Max(lowerBound + 0.01f, maxImpactSpeed),
                 attackerForwardSpeed);
 
             float angleExponent = config != null ? config.ImpactAngleExponent : 1.15f;
             float direction01 = Mathf.Clamp01(directionDot);
             float shapedDirection = Mathf.Pow(direction01, Mathf.Max(0.01f, angleExponent));
-            float headOn = config != null ? config.HeadOnImpactMultiplier : 1.55f;
-            float glancing = config != null ? config.GlancingImpactMultiplier : 0.55f;
+            float headOn = config != null ? config.HeadOnImpactMultiplier : 2.25f;
+            float glancing = config != null ? config.GlancingImpactMultiplier : 0.3f;
             float angleScale = Mathf.Lerp(glancing, headOn, shapedDirection);
 
             float closing01 = Mathf.Clamp01(relativeClosingSpeed / Mathf.Max(0.01f, maxImpactSpeed));
-            float relativeClosingScale = 1f + (config != null ? config.RelativeClosingBonus : 0.22f) * closing01;
+            float relativeClosingScale = 1f + (config != null ? config.RelativeClosingBonus : 0.28f) * closing01;
 
             float dash = Mathf.Max(1f, dashMultiplier);
             float dashScale = Mathf.Lerp(1f, dash, speedCurve01);
 
-            float baseImpactImpulse = config != null ? config.BaseImpactImpulse : 18f;
-            float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 30f;
-            float topSpeedBonus = config != null ? config.ImpactTopSpeedBonus : 0.85f;
-            float lowSpeedSuppression = Mathf.Pow(speed01, 2.35f);
-            float topSpeedScale = 1f + Mathf.Max(0f, topSpeedBonus) * speed01 * speed01 * speed01 * 1.55f;
-            float baseShapedImpulse = Mathf.Lerp(baseImpactImpulse * 0.05f, maxImpactImpulse * 0.52f, lowSpeedSuppression);
+            float baseImpactImpulse = config != null ? config.BaseImpactImpulse : 42f;
+            float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 92f;
+            float topSpeedBonus = config != null ? config.ImpactTopSpeedBonus : 1.45f;
+            float lowSpeedSuppression = Mathf.Pow(speed01, 1.85f);
+            float topSpeedScale = 1f + Mathf.Max(0f, topSpeedBonus) * speed01 * speed01 * speed01 * 1.95f;
+            float baseShapedImpulse = Mathf.Lerp(baseImpactImpulse * 0.14f, maxImpactImpulse * 0.82f, lowSpeedSuppression);
             float firstImpactForce = baseShapedImpulse * topSpeedScale;
             firstImpactForce *= Mathf.Max(0f, angleScale) * Mathf.Max(1f, relativeClosingScale) * Mathf.Max(1f, dashScale);
 
-            float readableFloorScale = config != null ? config.HighSpeedReadableFloor : 0.58f;
+            float readableFloorScale = config != null ? config.HighSpeedReadableFloor : 0.62f;
             float readableFloor = maxImpactImpulse
                 * Mathf.Clamp01(readableFloorScale)
                 * speed01
                 * speed01
-                * 0.12f;
+                * 0.22f;
 
-            float momentumCap = attackerForwardSpeed * Mathf.Lerp(0.34f, 0.96f, speed01 * speed01);
-            float topSpeedCap = maxImpactSpeed * Mathf.Lerp(0.10f, 0.92f, speed01 * speed01 * speed01);
-            float configuredCap = maxImpactImpulse * Mathf.Lerp(0.14f, 0.62f, speed01 * speed01);
-            float dynamicImpactCap = Mathf.Max(0.55f, Mathf.Min(configuredCap, Mathf.Max(momentumCap, topSpeedCap)));
+            float speedSq = speed01 * speed01;
+            float momentumCap = attackerForwardSpeed * Mathf.Lerp(0.55f, 1.65f, speedSq);
+            float topSpeedCap = maxImpactSpeed * Mathf.Lerp(0.24f, 1.40f, speedSq);
+            float configuredCap = maxImpactImpulse * Mathf.Lerp(0.28f, 1.0f, speedSq);
+            float dynamicImpactCap = Mathf.Max(0.8f, Mathf.Min(configuredCap, Mathf.Max(momentumCap, topSpeedCap)));
+            float aggressiveBounceFloor = Mathf.Min(
+                maxImpactImpulse,
+                attackerForwardSpeed * Mathf.Lerp(0.95f, 1.75f, speedCurve01));
+            dynamicImpactCap = Mathf.Min(maxImpactImpulse, Mathf.Max(dynamicImpactCap, aggressiveBounceFloor));
 
-            float baseVictimImpulse = Mathf.Clamp(Mathf.Max(firstImpactForce, readableFloor), 0f, dynamicImpactCap);
+            float baseVictimImpulse = Mathf.Clamp(Mathf.Max(firstImpactForce, readableFloor, aggressiveBounceFloor), 0f, dynamicImpactCap);
             if (baseVictimImpulse <= 0.0001f)
             {
                 return default;
@@ -213,11 +227,13 @@ namespace Sumo
                 ? 0f
                 : Mathf.Clamp01((speed01 - arcadeThreshold01) / Mathf.Max(0.01f, 1f - arcadeThreshold01));
             float chargedSmooth = charged01 * charged01 * (3f - 2f * charged01);
-            float maxArcadeBoost = config != null ? config.FirstImpactArcadeBoost : 4.2f;
-            float maxArcadeCapBoost = config != null ? config.FirstImpactArcadeCapBoost : 3.1f;
+            float maxArcadeBoost = config != null ? config.FirstImpactArcadeBoost : 5.6f;
+            float maxArcadeCapBoost = config != null ? config.FirstImpactArcadeCapBoost : 4.2f;
             float arcadeBoost = Mathf.Lerp(1f, Mathf.Max(1f, maxArcadeBoost), chargedSmooth);
             float arcadeCapMultiplier = Mathf.Lerp(1f, Mathf.Max(1f, maxArcadeCapBoost), chargedSmooth);
-            float victimImpulse = Mathf.Min(baseVictimImpulse * arcadeBoost, dynamicImpactCap * arcadeCapMultiplier);
+            float victimImpulse = Mathf.Min(
+                maxImpactImpulse,
+                Mathf.Min(baseVictimImpulse * arcadeBoost, dynamicImpactCap * arcadeCapMultiplier));
 
             if (victimImpulse <= 0.0001f)
             {
@@ -227,9 +243,8 @@ namespace Sumo
             float recoilScale = config != null ? config.ImpactAttackerRecoilScale : 0.17f;
             float attackerRecoilImpulse = victimImpulse * Mathf.Clamp01(recoilScale);
             float initialRamEnergy = ComputeInitialRamEnergy(config, baseVictimImpulse, attackerForwardSpeed, maxImpactSpeed, direction01, dashScale);
-            float minRamStartSpeed = config != null ? config.MinRamStartSpeed : minImpactSpeed;
             float stopThreshold = config != null ? config.RamStopEnergyThreshold : 0.08f;
-            bool opensRamState = attackerForwardSpeed >= minRamStartSpeed && initialRamEnergy > stopThreshold;
+            bool opensRamState = initialRamEnergy > stopThreshold;
 
             return new SumoInitialImpactResult(
                 speedCurve,
@@ -342,7 +357,7 @@ namespace Sumo
 
             float minRamStartSpeed = config != null ? config.MinRamStartSpeed : 2.4f;
             float maxImpactSpeed = ResolveReferenceTopSpeed(config, minRamStartSpeed, attackerReferenceTopSpeed);
-            float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 30f;
+            float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 92f;
 
             float speed01 = Mathf.InverseLerp(
                 minRamStartSpeed,

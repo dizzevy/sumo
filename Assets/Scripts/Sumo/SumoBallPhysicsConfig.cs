@@ -25,37 +25,38 @@ namespace Sumo
         [Header("Initial Impact")]
         [FormerlySerializedAs("minPushSpeed")]
         [SerializeField] private float minImpactSpeed = 2.2f;
+        [SerializeField] private float impactActivationMinSpeed = 0.25f;
         [FormerlySerializedAs("maxEffectivePushSpeed")]
         [SerializeField] private float maxImpactSpeed = 10f;
         [FormerlySerializedAs("basePushImpulse")]
-        [SerializeField] private float baseImpactImpulse = 18f;
+        [SerializeField] private float baseImpactImpulse = 42f;
         [FormerlySerializedAs("maxPushImpulse")]
-        [SerializeField] private float maxImpactImpulse = 30f;
+        [SerializeField] private float maxImpactImpulse = 92f;
         [FormerlySerializedAs("initialImpactSpeedExponent")]
         [SerializeField] private float impactSpeedExponent = 1.85f;
         [FormerlySerializedAs("initialImpactTopSpeedBonus")]
-        [SerializeField] private float impactTopSpeedBonus = 0.85f;
+        [SerializeField] private float impactTopSpeedBonus = 1.45f;
         [FormerlySerializedAs("initialImpactAngleExponent")]
         [SerializeField] private float impactAngleExponent = 1.15f;
         [FormerlySerializedAs("headOnMultiplier")]
-        [SerializeField] private float headOnImpactMultiplier = 1.55f;
+        [SerializeField] private float headOnImpactMultiplier = 2.25f;
         [FormerlySerializedAs("glancingHitMultiplier")]
-        [SerializeField] private float glancingImpactMultiplier = 0.55f;
-        [SerializeField] private float relativeClosingBonus = 0.22f;
+        [SerializeField] private float glancingImpactMultiplier = 0.3f;
+        [SerializeField] private float relativeClosingBonus = 0.28f;
         [FormerlySerializedAs("initialImpactHighSpeedFloorScale")]
-        [SerializeField] private float highSpeedReadableFloor = 0.58f;
+        [SerializeField] private float highSpeedReadableFloor = 0.62f;
         [SerializeField] private float firstImpactArcadeThreshold01 = 0.32f;
-        [SerializeField] private float firstImpactArcadeBoost = 4.2f;
-        [SerializeField] private float firstImpactArcadeCapBoost = 3.1f;
+        [SerializeField] private float firstImpactArcadeBoost = 5.6f;
+        [SerializeField] private float firstImpactArcadeCapBoost = 4.2f;
         [FormerlySerializedAs("initialImpactAttackerRecoilScale")]
-        [SerializeField] private float impactAttackerRecoilScale = 0.17f;
+        [SerializeField] private float impactAttackerRecoilScale = 0.20f;
         [FormerlySerializedAs("verticalImpulseMultiplier")]
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
-        [SerializeField] private float dashImpactMultiplier = 1.4f;
-        [SerializeField] private float impactBurstDuration = 0.09f;
-        [SerializeField] private float firstImpactBurstFrontload = 0.62f;
-        [SerializeField] private float firstImpactKickImpulseShare = 0.48f;
+        [SerializeField] private float dashImpactMultiplier = 1.6f;
+        [SerializeField] private float impactBurstDuration = 0.11f;
+        [SerializeField] private float firstImpactBurstFrontload = 0.85f;
+        [SerializeField] private float firstImpactKickImpulseShare = 0.97f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
@@ -113,8 +114,8 @@ namespace Sumo
         [SerializeField] private float victimLocalPushPrediction = 1.02f;
         [SerializeField] private float victimLocalPushMaxDeltaVPerTick = 0.22f;
         [SerializeField] private float victimLocalPushBrakeDeltaVPerTick = 0.12f;
-        [SerializeField] private float victimLocalImpactCatchupAcceleration = 42f;
-        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.16f;
+        [SerializeField] private float victimLocalImpactCatchupAcceleration = 72f;
+        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.32f;
         [SerializeField] private float victimLocalRamCatchupAcceleration = 30f;
 
         [Header("Victim Anticipation")]
@@ -125,7 +126,7 @@ namespace Sumo
         [SerializeField] private int victimAnticipationContactLossTicks = 2;
         [SerializeField] private int victimAnticipationHandoffTicks = 3;
         [SerializeField] private float victimAnticipationTargetSpeedScale = 0.98f;
-        [SerializeField] private float victimAnticipationImpactMaxDeltaVPerTick = 0.14f;
+        [SerializeField] private float victimAnticipationImpactMaxDeltaVPerTick = 0.28f;
         [SerializeField] private float victimAnticipationRamMaxDeltaVPerTick = 0.10f;
 
         [Header("Anti-Bulldoze")]
@@ -147,6 +148,7 @@ namespace Sumo
         public float ColliderContactOffset => colliderContactOffset;
 
         public float MinImpactSpeed => minImpactSpeed;
+        public float ImpactActivationMinSpeed => impactActivationMinSpeed;
         public float MaxImpactSpeed => maxImpactSpeed;
         public float BaseImpactImpulse => baseImpactImpulse;
         public float MaxImpactImpulse => maxImpactImpulse;
@@ -224,8 +226,12 @@ namespace Sumo
 
         public float EvaluateImpactSpeed01(float attackerForwardSpeed)
         {
-            float top = Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed);
-            return Mathf.InverseLerp(minImpactSpeed, top, attackerForwardSpeed);
+            float lowerBound = Mathf.Clamp(
+                impactActivationMinSpeed,
+                0f,
+                Mathf.Max(0.01f, maxImpactSpeed - 0.01f));
+            float top = Mathf.Max(lowerBound + 0.01f, maxImpactSpeed);
+            return Mathf.InverseLerp(lowerBound, top, attackerForwardSpeed);
         }
 
         public void ApplyTo(Rigidbody targetRigidbody, SphereCollider targetCollider)
@@ -277,6 +283,7 @@ namespace Sumo
 
             minImpactSpeed = Mathf.Max(0f, minImpactSpeed);
             maxImpactSpeed = Mathf.Max(minImpactSpeed + 0.01f, maxImpactSpeed);
+            impactActivationMinSpeed = Mathf.Clamp(impactActivationMinSpeed, 0.05f, maxImpactSpeed - 0.01f);
             baseImpactImpulse = Mathf.Max(0f, baseImpactImpulse);
             maxImpactImpulse = Mathf.Max(baseImpactImpulse + 0.01f, maxImpactImpulse);
             impactSpeedExponent = Mathf.Clamp(impactSpeedExponent, 0.25f, 4f);
@@ -334,7 +341,7 @@ namespace Sumo
             victimLocalPushPrediction = Mathf.Clamp(victimLocalPushPrediction, 0f, 1.25f);
             victimLocalPushMaxDeltaVPerTick = Mathf.Clamp(victimLocalPushMaxDeltaVPerTick, 0.005f, 0.3f);
             victimLocalPushBrakeDeltaVPerTick = Mathf.Clamp(victimLocalPushBrakeDeltaVPerTick, 0.005f, 0.2f);
-            victimLocalImpactCatchupAcceleration = Mathf.Clamp(victimLocalImpactCatchupAcceleration, 1f, 60f);
+            victimLocalImpactCatchupAcceleration = Mathf.Clamp(victimLocalImpactCatchupAcceleration, 1f, 90f);
             victimLocalImpactMaxDeltaVPerTick = Mathf.Clamp(victimLocalImpactMaxDeltaVPerTick, 0.01f, 0.35f);
             victimLocalRamCatchupAcceleration = Mathf.Clamp(victimLocalRamCatchupAcceleration, 1f, 60f);
             victimAnticipationMinClosingSpeed = Mathf.Clamp(victimAnticipationMinClosingSpeed, 0.05f, 20f);

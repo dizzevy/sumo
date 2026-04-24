@@ -176,6 +176,39 @@ namespace Sumo
                     }
                 };
             }
+
+            public static SmoothingProfile CreateProxyVictimCinematicDefault()
+            {
+                return new SmoothingProfile
+                {
+                    Position = new PositionSettings
+                    {
+                        DeadZone = 0.010f,
+                        SmallError = 0.40f,
+                        MediumError = 2.20f,
+                        SmallSharpness = 0.65f,
+                        MediumSharpness = 1.15f,
+                        LargeSharpness = 2.30f,
+                        SmallCatchUpSpeed = 0.55f,
+                        MediumCatchUpSpeed = 1.25f,
+                        LargeCatchUpSpeed = 3.60f,
+                        HardSnapDistance = 95f
+                    },
+                    Rotation = new RotationSettings
+                    {
+                        DeadZoneDegrees = 1.6f,
+                        SmallErrorDegrees = 17f,
+                        MediumErrorDegrees = 78f,
+                        SmallSharpness = 0.62f,
+                        MediumSharpness = 1.10f,
+                        LargeSharpness = 2.20f,
+                        SmallCatchUpDegreesPerSecond = 11f,
+                        MediumCatchUpDegreesPerSecond = 28f,
+                        LargeCatchUpDegreesPerSecond = 88f,
+                        HardSnapDegrees = 358f
+                    }
+                };
+            }
         }
 
         [Header("Targets")]

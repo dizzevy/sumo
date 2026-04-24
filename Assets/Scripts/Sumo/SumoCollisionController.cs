@@ -63,7 +63,7 @@ namespace Sumo
         private const float FallbackVictimAnticipationImpactMaxDeltaVPerTick = 0.14f;
         private const float FallbackVictimAnticipationRamMaxDeltaVPerTick = 0.1f;
         private const float VictimAnticipationNearContactPadding = 0.03f;
-        private const float ReimpactHardBreakDistanceMultiplier = 1.4f;
+        private const float FallbackImpactActivationMinSpeed = 0.25f;
 
         [Networked] private int VictimPresentationSequence { get; set; }
         [Networked] private float VictimPresentationStrength { get; set; }
@@ -243,17 +243,16 @@ namespace Sumo
         private const int FallbackContactBreakGraceTicks = 6;
         private const int FallbackReengageBreakTicks = 6;
         private const float FallbackReengageDistance = 0.22f;
-        private const float FallbackReengageSpeed = 4.8f;
         private const float FallbackTieSpeedEpsilon = 0.15f;
         private const float FallbackMinRamPressureSpeed = 1.6f;
         private const float FallbackRamStopEnergyThreshold = 0.08f;
         private const float FallbackImpactVerticalLift = 0.02f;
-        private const float FallbackImpactBurstDuration = 0.08f;
-        private const float FallbackFirstImpactBurstFrontload = 0.62f;
-        private const float FallbackFirstImpactKickShare = 0.48f;
+        private const float FallbackImpactBurstDuration = 0.11f;
+        private const float FallbackFirstImpactBurstFrontload = 0.85f;
+        private const float FallbackFirstImpactKickShare = 0.95f;
+        private const int InitialImpactRamGateTicks = 5;
         private const float FallbackAttackerReferenceTopSpeed = 10f;
         private const int FallbackMaxRamDurationTicks = 32;
-        private const int FallbackMinReimpactTicks = 12;
         private const float RamContactBlendRisePerSecond = 13f;
         private const float RamContactBlendFallPerSecond = 7f;
         private const float RamContactStartBlend = 0.24f;
@@ -277,12 +276,11 @@ namespace Sumo
         private const float PredictedActiveCombatPenetrationResolveRate = 7.5f;
         private const float PredictedActiveCombatPenetrationResolveMaxSpeed = 1.35f;
         private const float PredictedActiveCombatPenetrationDeadZone = 0.012f;
-        private const int ActiveCombatVictimImpactResponseTicks = 2;
-        private const float ActiveCombatVictimImpactAuthorityResponseShare = 0.22f;
-        private const float ActiveCombatVictimImpactPredictedResponseShare = 0.08f;
+        private const int ActiveCombatVictimImpactResponseTicks = 3;
+        private const float ActiveCombatVictimImpactAuthorityResponseShare = 0.34f;
+        private const float ActiveCombatVictimImpactPredictedResponseShare = 0.14f;
         private const float ActiveCombatVictimRamAuthorityResponseShare = 0.08f;
         private const float ActiveCombatVictimRamPredictedResponseShare = 0.02f;
-        private const int ReimpactSuppressionContactResetTicks = 12;
         private const float ActiveCombatPenetrationSlopBonus = 0.025f;
         private const int PredictedRollbackHistoryTicks = 192;
 
@@ -1239,6 +1237,61 @@ namespace Sumo
             return GetVictimPushAssist01() > 0.01f;
         }
 
+        public static bool TryGetLocalVictimPresentationAssist(NetworkRunner runner, out float assist01)
+        {
+            assist01 = 0f;
+            if (runner == null || ActiveControllers.Count == 0)
+            {
+                return false;
+            }
+
+            bool found = false;
+            float strongestAssist = 0f;
+
+            foreach (KeyValuePair<int, SumoCollisionController> entry in ActiveControllers)
+            {
+                SumoCollisionController controller = entry.Value;
+                if (controller == null || controller.Runner != runner)
+                {
+                    continue;
+                }
+
+                if (controller.Object == null || !controller.Object.IsInSimulation)
+                {
+                    continue;
+                }
+
+                if (!controller.HasInputAuthority || controller.HasStateAuthority)
+                {
+                    continue;
+                }
+
+                // Do not broadcast victim-lock while the local player is the aggressor.
+                if (controller.HasActiveRamDrive())
+                {
+                    continue;
+                }
+
+                float candidateAssist = controller.GetVictimPushAssistForPresentation01();
+                if (controller.IsLocalVictimCatchupActiveForPresentation())
+                {
+                    candidateAssist = Mathf.Max(candidateAssist, 1f);
+                }
+
+                candidateAssist = Mathf.Clamp01(candidateAssist);
+                if (candidateAssist <= 0.0001f)
+                {
+                    continue;
+                }
+
+                found = true;
+                strongestAssist = Mathf.Max(strongestAssist, candidateAssist);
+            }
+
+            assist01 = strongestAssist;
+            return found;
+        }
+
         public float GetRamDriveAssist01()
         {
             if (Runner == null)
@@ -1297,10 +1350,6 @@ namespace Sumo
 
                 if (state.State == SumoPairState.InitialImpact)
                 {
-                    float duration = Mathf.Max(0.01f, state.InitialImpactDuration);
-                    float elapsed01 = Mathf.Clamp01(state.InitialImpactElapsed / duration);
-                    float impactAssist = Mathf.Lerp(1f, 0.55f, elapsed01);
-                    assist = Mathf.Max(assist, impactAssist);
                     continue;
                 }
 
@@ -2238,7 +2287,7 @@ namespace Sumo
                         break;
 
                     case SumoPairState.RamDepleted:
-                        ProcessRamDepletedState(ref pairState, currentTick, hasContact, first, second);
+                        ProcessRamDepletedState(ref pairState, currentTick, hasContact, first, second, mode);
                         break;
 
                     case SumoPairState.ReengageReady:
@@ -2272,15 +2321,12 @@ namespace Sumo
                 return;
             }
 
-            pairState.BreakStartTick = 0;
-            pairState.MaxSeparationSinceBreak = 0f;
-
             if (!HasFreshEnter(pairState))
             {
                 return;
             }
 
-            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, false, mode);
+            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, mode);
             ConsumePendingEnter(ref pairState);
 
             if (!startedImpact)
@@ -2303,7 +2349,19 @@ namespace Sumo
                 return;
             }
 
-            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
+            bool burstComplete = ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
+
+            if (IsImpactRamLocked(pairState, currentTick, burstComplete))
+            {
+                return;
+            }
+
+            if (!hasContact)
+            {
+                pairState.RamContactBlend = Mathf.Max(0f, pairState.RamContactBlend * 0.5f);
+                pairState.State = SumoPairState.Ramming;
+                return;
+            }
 
             float stopThreshold = GetRamStopThreshold(attacker);
             if (pairState.RamEnergy <= stopThreshold)
@@ -2475,16 +2533,27 @@ namespace Sumo
             int currentTick,
             bool hasContact,
             SumoCollisionController first,
-            SumoCollisionController second)
+            SumoCollisionController second,
+            SimulationMode mode)
         {
             pairState.RamEnergy = 0f;
             ClearAttacker(ref pairState);
 
             if (hasContact)
             {
-                pairState.BreakStartTick = 0;
-                pairState.MaxSeparationSinceBreak = 0f;
-                pairState.ReengageReadyTick = 0;
+                if (HasFreshEnter(pairState))
+                {
+                    bool startedImpactOrRam = TryStartInitialImpact(ref pairState, currentTick, first, second, mode);
+                    ConsumePendingEnter(ref pairState);
+                    if (startedImpactOrRam)
+                    {
+                        pairState.BreakStartTick = 0;
+                        pairState.MaxSeparationSinceBreak = 0f;
+                        pairState.ReengageReadyTick = 0;
+                        return;
+                    }
+                }
+
                 ConsumePendingEnter(ref pairState);
 
                 return;
@@ -2516,9 +2585,6 @@ namespace Sumo
                 return;
             }
 
-            pairState.BreakStartTick = 0;
-            pairState.MaxSeparationSinceBreak = 0f;
-
             if (!HasFreshEnter(pairState))
             {
                 return;
@@ -2535,14 +2601,18 @@ namespace Sumo
                 return;
             }
 
-            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, true, mode);
-
-            if (!startedImpact)
+            bool startedImpact = TryStartInitialImpact(ref pairState, currentTick, first, second, mode);
+            if (startedImpact)
             {
-                pairState.State = SumoPairState.RamDepleted;
+                pairState.BreakStartTick = 0;
+                pairState.MaxSeparationSinceBreak = 0f;
                 pairState.ReengageReadyTick = 0;
-                ClearAttacker(ref pairState);
+                return;
             }
+
+            pairState.State = SumoPairState.RamDepleted;
+            pairState.ReengageReadyTick = 0;
+            ClearAttacker(ref pairState);
         }
 
         private bool TryStartInitialImpact(
@@ -2550,7 +2620,6 @@ namespace Sumo
             int currentTick,
             SumoCollisionController first,
             SumoCollisionController second,
-            bool requireReengageSpeed,
             SimulationMode mode)
         {
             if (currentTick == pairState.LastImpactTick)
@@ -2563,16 +2632,6 @@ namespace Sumo
                 && currentTick == lastPredictedTick)
             {
                 return false;
-            }
-
-            if (pairState.LastImpactTick > int.MinValue)
-            {
-                int minReimpactTicks = GetPairMinReimpactTicks(first, second);
-                long impactDelta = (long)currentTick - pairState.LastImpactTick;
-                if (impactDelta >= 0L && impactDelta < minReimpactTicks)
-                {
-                    return false;
-                }
             }
 
             if (first == null
@@ -2694,43 +2753,42 @@ namespace Sumo
             float attackerForwardSpeed = Mathf.Max(entryForwardSpeed, Mathf.Max(currentForwardSpeed, intentForwardSpeed));
             relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, attackerForwardSpeed);
 
-            float minPushSpeed = attacker.physicsConfig != null
-                ? attacker.physicsConfig.MinImpactSpeed
-                : 0f;
-
-            float reengageThreshold = GetPairReengageSpeedThreshold(attacker, victim);
-
-            float requiredSpeed = requireReengageSpeed
-                ? Mathf.Max(minPushSpeed, reengageThreshold)
-                : minPushSpeed;
-
-            if (requireReengageSpeed && entryForwardSpeed < reengageThreshold)
+            float impactActivationMinSpeed = attacker.physicsConfig != null
+                ? attacker.physicsConfig.ImpactActivationMinSpeed
+                : FallbackImpactActivationMinSpeed;
+            if (attackerForwardSpeed < impactActivationMinSpeed)
             {
                 return false;
-            }
-
-            if (attackerForwardSpeed < requiredSpeed)
-            {
-                return false;
-            }
-
-            if (pairState.ReimpactSuppressedUntilHardBreak)
-            {
-                int ticksSinceContact = pairState.LastContactTick > 0
-                    ? currentTick - pairState.LastContactTick
-                    : int.MaxValue;
-                if (ticksSinceContact >= ReimpactSuppressionContactResetTicks)
-                {
-                    pairState.ReimpactSuppressedUntilHardBreak = false;
-                }
             }
 
             bool reimpactSuppressed = pairState.ReimpactSuppressedUntilHardBreak
                 && pairState.LastImpactTick > int.MinValue;
             if (reimpactSuppressed)
             {
-                if (!IsHardBreakForReimpactSatisfied(pairState, currentTick, first, second))
+                float stopThreshold = GetRamStopThreshold(attacker);
+                bool ramInactive = pairState.State != SumoPairState.Ramming;
+                bool inertiaDepleted = pairState.RamEnergy <= stopThreshold + 0.0001f;
+                bool canRearmImpactCycle = ramInactive || inertiaDepleted;
+                bool shouldLogSuppression = logStateMachine || attacker.logStateMachine || victim.logStateMachine;
+
+                if (canRearmImpactCycle)
                 {
+                    pairState.ReimpactSuppressedUntilHardBreak = false;
+
+                    if (shouldLogSuppression)
+                    {
+                        Debug.Log(
+                            $"SumoCollisionController: impact cycle rearmed {attacker.name} -> {victim.name}; state={pairState.State}; ramInactive={ramInactive}; inertiaDepleted={inertiaDepleted}; ramEnergy={pairState.RamEnergy:0.000}/{stopThreshold:0.000}; tick={currentTick}; mode={mode}");
+                    }
+                }
+                else
+                {
+                    if (shouldLogSuppression)
+                    {
+                        Debug.Log(
+                            $"SumoCollisionController: impact cycle suppressed->ram {attacker.name} -> {victim.name}; state={pairState.State}; ramEnergy={pairState.RamEnergy:0.000}/{stopThreshold:0.000}; tick={currentTick}; mode={mode}");
+                    }
+
                     return TryStartRamWithoutImpact(
                         ref pairState,
                         currentTick,
@@ -2741,8 +2799,6 @@ namespace Sumo
                         directionDot,
                         mode);
                 }
-
-                pairState.ReimpactSuppressedUntilHardBreak = false;
             }
 
             float configuredDashMultiplier = attacker.physicsConfig != null
@@ -2785,6 +2841,8 @@ namespace Sumo
             pairState.InitialImpulse = impactResult.VictimImpulse;
             pairState.InitialImpactDuration = GetPairImpactBurstDuration(attacker, victim);
             pairState.InitialImpactElapsed = 0f;
+            pairState.ImpactRamUnlockTick = currentTick + InitialImpactRamGateTicks;
+            pairState.ImpactBurstGraceUntilTick = currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration);
             pairState.InitialVictimDeltaV = impactResult.VictimImpulse / Mathf.Max(0.01f, victim._rigidbody.mass);
             pairState.InitialAttackerDeltaV = impactResult.AttackerRecoilImpulse / Mathf.Max(0.01f, attacker._rigidbody.mass);
             pairState.RamContactBlend = 0f;
@@ -2819,8 +2877,6 @@ namespace Sumo
                 float presentationStrength = ComputeVictimPresentationStrength(attacker, impactResult);
                 victim.PublishVictimPresentationImpact(presentationStrength);
 
-                PublishRamDrive(attacker, 1f);
-
                 Vector3 catchupDirection = GetHorizontalDirection(impulseDirection);
                 if (catchupDirection.sqrMagnitude < 0.0001f)
                 {
@@ -2834,7 +2890,7 @@ namespace Sumo
 
                 float impactTargetSpeed = Mathf.Max(
                     Vector3.Dot(victim._rigidbody.linearVelocity, catchupDirection),
-                    attackerForwardSpeed * Mathf.Lerp(0.70f, 0.88f, Mathf.Clamp01(impactResult.SpeedCurve)));
+                    attackerForwardSpeed * Mathf.Lerp(0.84f, 1.05f, Mathf.Clamp01(impactResult.SpeedCurve)));
 
                 PublishVictimPush(
                     victim,
@@ -2909,15 +2965,7 @@ namespace Sumo
             float seededRamEnergy = pairState.RamEnergy;
             if (seededRamEnergy <= stopThreshold)
             {
-                float speed01 = attacker.physicsConfig != null
-                    ? attacker.physicsConfig.EvaluateImpactSpeed01(attackerForwardSpeed)
-                    : Mathf.Clamp01(attackerForwardSpeed / Mathf.Max(0.01f, FallbackAttackerReferenceTopSpeed));
-                float minRamEnergy = attacker.physicsConfig != null
-                    ? attacker.physicsConfig.RamMinEnergy
-                    : 0.5f;
-                seededRamEnergy = Mathf.Max(
-                    stopThreshold + 0.05f,
-                    minRamEnergy * Mathf.Lerp(0.45f, 0.9f, speed01));
+                return false;
             }
 
             float maxRamEnergy = attacker.physicsConfig != null
@@ -2938,6 +2986,8 @@ namespace Sumo
             pairState.MaxRamDurationTicks = GetPairMaxRamDurationTicks(attacker, victim);
             pairState.InitialImpactDuration = 0f;
             pairState.InitialImpactElapsed = 0f;
+            pairState.ImpactRamUnlockTick = 0;
+            pairState.ImpactBurstGraceUntilTick = 0;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.InitialImpulse = 0f;
@@ -3052,21 +3102,6 @@ namespace Sumo
             return breakSatisfied && distanceSatisfied;
         }
 
-        private static bool IsHardBreakForReimpactSatisfied(
-            in SumoRamState pairState,
-            int currentTick,
-            SumoCollisionController first,
-            SumoCollisionController second)
-        {
-            int breakTicks = GetPairReengageBreakTicks(first, second);
-            bool breakSatisfied = pairState.BreakStartTick > 0
-                && currentTick - pairState.BreakStartTick >= breakTicks;
-
-            float requiredDistance = GetPairReengageDistance(first, second) * ReimpactHardBreakDistanceMultiplier;
-            bool distanceSatisfied = pairState.MaxSeparationSinceBreak >= requiredDistance;
-            return breakSatisfied && distanceSatisfied;
-        }
-
         private static bool ShouldRemoveState(in SumoRamState pairState, int currentTick, int contactBreakTicks)
         {
             if (pairState.OwnerKey == 0 || !pairState.HasPairControllers)
@@ -3143,7 +3178,7 @@ namespace Sumo
                 : Mathf.Clamp01(pairState.InitialImpactSpeed / Mathf.Max(0.01f, FallbackAttackerReferenceTopSpeed));
             float speedSmooth = speed01 * speed01 * (3f - 2f * speed01);
 
-            float speedScaledShare = Mathf.Clamp01(configuredShare * Mathf.Lerp(0.44f, 1f, speedSmooth));
+            float speedScaledShare = Mathf.Clamp01(configuredShare * Mathf.Lerp(0.82f, 1f, speedSmooth));
             if (speedScaledShare <= 0.0001f)
             {
                 return;
@@ -3167,17 +3202,14 @@ namespace Sumo
             float victimKickDeltaV = pairState.InitialVictimDeltaV * speedScaledShare;
             float attackerKickDeltaV = pairState.InitialAttackerDeltaV * speedScaledShare;
 
-            float victimKickImpulse = victimKickDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
-            float attackerKickImpulse = attackerKickDeltaV * Mathf.Max(0.01f, attacker._rigidbody.mass);
-
             if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
             {
-                ApplyImpulse(victim, direction * victimKickImpulse, mode);
+                ApplyVelocityDelta(victim, direction * victimKickDeltaV, mode);
             }
 
             if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
             {
-                ApplyImpulse(attacker, -direction * attackerKickImpulse, mode);
+                ApplyVelocityDelta(attacker, -direction * attackerKickDeltaV, mode);
             }
 
             float remainingShare = Mathf.Clamp01(1f - speedScaledShare);
@@ -3253,16 +3285,40 @@ namespace Sumo
 
             if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
             {
-                ApplyAcceleration(victim, direction * (victimDeltaVStep / dt), mode);
+                ApplyVelocityDelta(victim, direction * victimDeltaVStep, mode);
             }
 
             if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
             {
-                ApplyAcceleration(attacker, -direction * (attackerDeltaVStep / dt), mode);
+                ApplyVelocityDelta(attacker, -direction * attackerDeltaVStep, mode);
             }
 
             pairState.InitialImpactElapsed = nextElapsed;
             return nextElapsed >= duration - 0.0001f;
+        }
+
+        private int GetImpactBurstGraceTicks(float duration)
+        {
+            float deltaTime = Runner != null ? Runner.DeltaTime : Time.fixedDeltaTime;
+            if (deltaTime <= 0f)
+            {
+                return InitialImpactRamGateTicks;
+            }
+
+            int burstTicks = Mathf.CeilToInt(Mathf.Max(0.01f, duration) / deltaTime);
+            return Mathf.Max(InitialImpactRamGateTicks, burstTicks);
+        }
+
+        private static bool IsImpactRamLocked(in SumoRamState pairState, int currentTick, bool burstComplete)
+        {
+            if (pairState.ImpactRamUnlockTick > 0 && currentTick < pairState.ImpactRamUnlockTick)
+            {
+                return true;
+            }
+
+            return !burstComplete
+                && pairState.ImpactBurstGraceUntilTick > 0
+                && currentTick < pairState.ImpactBurstGraceUntilTick;
         }
 
         private static float EvaluateImpactBurstIntegral(float normalizedTime, float frontload01)
@@ -3333,6 +3389,8 @@ namespace Sumo
             pairState.RamEnergy = 0f;
             pairState.RamContactBlend = 0f;
             pairState.ReengageReadyTick = 0;
+            pairState.ImpactRamUnlockTick = 0;
+            pairState.ImpactBurstGraceUntilTick = 0;
             ConsumePendingEnter(ref pairState);
 
             if (contactActive)
@@ -3361,6 +3419,8 @@ namespace Sumo
             pairState.InitialImpulse = 0f;
             pairState.InitialImpactDuration = 0f;
             pairState.InitialImpactElapsed = 0f;
+            pairState.ImpactRamUnlockTick = 0;
+            pairState.ImpactBurstGraceUntilTick = 0;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.RamContactBlend = 0f;
@@ -3534,6 +3594,8 @@ namespace Sumo
                 BreakStartTick = 0,
                 ReengageReadyTick = 0,
                 ImpactLatchTick = int.MinValue,
+                ImpactRamUnlockTick = 0,
+                ImpactBurstGraceUntilTick = 0,
                 ReimpactSuppressedUntilHardBreak = false
             };
         }
@@ -3899,24 +3961,11 @@ namespace Sumo
             return Mathf.Clamp(Mathf.Max(FallbackReengageDistance, Mathf.Max(fromA, fromB)), 0.14f, 0.4f);
         }
 
-        private static float GetPairReengageSpeedThreshold(SumoCollisionController a, SumoCollisionController b)
-        {
-            float fromA = a != null && a.physicsConfig != null ? a.physicsConfig.ReengageSpeedThreshold : FallbackReengageSpeed;
-            float fromB = b != null && b.physicsConfig != null ? b.physicsConfig.ReengageSpeedThreshold : FallbackReengageSpeed;
-            return Mathf.Max(FallbackReengageSpeed, Mathf.Max(fromA, fromB));
-        }
-
         private static int GetPairMaxRamDurationTicks(SumoCollisionController a, SumoCollisionController b)
         {
             int fromA = a != null && a.physicsConfig != null ? a.physicsConfig.MaxRamDurationTicks : FallbackMaxRamDurationTicks;
             int fromB = b != null && b.physicsConfig != null ? b.physicsConfig.MaxRamDurationTicks : FallbackMaxRamDurationTicks;
             return Mathf.Clamp(Mathf.Max(1, Mathf.Max(fromA, fromB)), 1, 34);
-        }
-
-        private static int GetPairMinReimpactTicks(SumoCollisionController a, SumoCollisionController b)
-        {
-            int reengageTicks = GetPairReengageBreakTicks(a, b);
-            return Mathf.Max(FallbackMinReimpactTicks, reengageTicks * 2);
         }
 
         private static float GetPairMinRamPressureSpeed(SumoCollisionController a, SumoCollisionController b)
@@ -4290,8 +4339,6 @@ namespace Sumo
             pairState.LastEnterTick = currentTick;
             pairState.PendingEnterTick = currentTick;
             pairState.HasPendingEnter = true;
-            pairState.BreakStartTick = 0;
-            pairState.MaxSeparationSinceBreak = 0f;
         }
 
         private void RegisterActiveController()
