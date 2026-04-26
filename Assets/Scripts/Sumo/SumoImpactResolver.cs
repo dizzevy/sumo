@@ -101,8 +101,8 @@ namespace Sumo
         private const float DefaultMinImpactSpeed = 2.2f;
         private const float DefaultImpactActivationMinSpeed = 0.25f;
         private const float DefaultMaxImpactSpeed = 10f;
-        private const float DefaultLowTierShare01 = 0.50f;
-        private const float DefaultMidTierShare01 = 0.08f;
+        private const float DefaultLowTierShare01 = 0.77f;
+        private const float DefaultMidTierShare01 = 0.15f;
         private const float DefaultTierHysteresisShare01 = 0.02f;
         private const float DefaultBackstepDeadZoneShare01 = 0.02f;
 

@@ -59,8 +59,8 @@ namespace Sumo
         [SerializeField] private float firstImpactKickImpulseShare = 0.97f;
         [Header("Impact Tiers & Recovery")]
         [SerializeField] private bool useNormalizedTierThresholds = true;
-        [SerializeField] private float lowTierShare01 = 0.50f;
-        [SerializeField] private float midTierShare01 = 0.08f;
+        [SerializeField] private float lowTierShare01 = 0.77f;
+        [SerializeField] private float midTierShare01 = 0.15f;
         [SerializeField] private float tierHysteresisShare01 = 0.02f;
         [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
         [Header("Impact Tiers & Recovery (Legacy Absolute Fallback)")]
