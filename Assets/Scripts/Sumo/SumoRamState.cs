@@ -44,8 +44,10 @@ namespace Sumo
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
         public bool ReimpactSuppressedUntilHardBreak;
+        public bool IsLowRamMode;
         public SumoPairState State;
         public SumoTieResolvedBy TieResolvedBy;
+        public SumoCollisionTier CollisionTier;
         public float EnterFirstApproachSpeed;
         public float EnterSecondApproachSpeed;
         public float EnterRelativeClosingSpeed;

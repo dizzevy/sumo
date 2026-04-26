@@ -323,6 +323,13 @@ namespace Sumo
         {
             Vector3 requiredAcceleration = Vector3.zero;
             float maxSpeed = GetMaxSpeed();
+            bool impactRecoveryActive = _collisionController != null && _collisionController.IsImpactRecoveryActive();
+            float impactRecoveryDriveScale = impactRecoveryActive
+                ? Mathf.Clamp01(_collisionController.GetImpactRecoveryDriveScale())
+                : 1f;
+            float impactRecoveryBrakeMultiplier = impactRecoveryActive
+                ? Mathf.Max(1f, _collisionController.GetImpactRecoveryBrakeMultiplier())
+                : 1f;
 
             if (hasMoveInput && targetHorizontalVelocity.sqrMagnitude > 0.0001f)
             {
@@ -332,12 +339,15 @@ namespace Sumo
                 float forwardSpeed = Mathf.Max(0f, speedAlongDesired);
 
                 float driveAccelerationMagnitude = EvaluateDriveAccelerationMagnitude(forwardSpeed, inputStrength);
+                driveAccelerationMagnitude *= impactRecoveryDriveScale;
                 Vector3 forwardAcceleration = desiredDirection * driveAccelerationMagnitude;
 
                 Vector3 desiredVelocity = desiredDirection * (maxSpeed * inputStrength);
                 Vector3 velocityError = desiredVelocity - horizontalVelocity;
                 Vector3 steeringAcceleration = velocityError * GetSteeringResponsiveness();
-                float steeringCap = GetBraking() * (hardBrake ? GetHardBrakeMultiplier() : 1f);
+                float steeringCap = GetBraking()
+                    * (hardBrake ? GetHardBrakeMultiplier() : 1f)
+                    * impactRecoveryBrakeMultiplier;
                 steeringAcceleration = Vector3.ClampMagnitude(steeringAcceleration, steeringCap);
 
                 float forwardSteering = Vector3.Dot(steeringAcceleration, desiredDirection);
@@ -354,12 +364,21 @@ namespace Sumo
                 if (speed > 0.0001f)
                 {
                     float deceleration = EvaluateCoastDeceleration(hardBrake);
+                    deceleration *= impactRecoveryBrakeMultiplier;
                     requiredAcceleration = -horizontalVelocity / speed * deceleration;
                 }
             }
 
             Vector3 rollingDragAcceleration = EvaluateRollingDragAcceleration(horizontalVelocity, hasMoveInput);
             requiredAcceleration += rollingDragAcceleration;
+
+            if (impactRecoveryActive && horizontalVelocity.sqrMagnitude > 0.0001f)
+            {
+                float speed = horizontalVelocity.magnitude;
+                Vector3 recoveryBrakeDirection = -horizontalVelocity / speed;
+                float extraRecoveryBrake = GetBraking() * Mathf.Max(0f, impactRecoveryBrakeMultiplier - 1f);
+                requiredAcceleration += recoveryBrakeDirection * extraRecoveryBrake;
+            }
 
             bool limitIntoPlayers = physicsConfig == null || physicsConfig.LimitAccelerationIntoPlayers;
             float intoPlayerScale = physicsConfig != null

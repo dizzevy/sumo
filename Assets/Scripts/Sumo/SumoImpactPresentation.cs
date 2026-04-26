@@ -93,6 +93,12 @@ namespace Sumo
 
             float normalizedByImpulse = Mathf.InverseLerp(minImpactImpulse, maxImpactImpulse, impactData.FinalImpulse);
             float normalizedImpact = Mathf.Clamp01(Mathf.Max(normalizedByImpulse, impactData.SpeedStrength));
+            bool isAttacker = impactData.Attacker == networkObject;
+            if (isAttacker)
+            {
+                float backstepNormalized = Mathf.InverseLerp(0f, Mathf.Max(0.01f, maxImpactImpulse), impactData.AttackerBackstepImpulse);
+                normalizedImpact = Mathf.Clamp01(Mathf.Max(normalizedImpact, Mathf.Max(backstepNormalized, impactData.ImpactSpeed01 * 0.55f)));
+            }
             if (normalizedImpact <= 0f)
             {
                 return;

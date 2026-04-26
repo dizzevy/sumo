@@ -57,6 +57,27 @@ namespace Sumo
         [SerializeField] private float impactBurstDuration = 0.11f;
         [SerializeField] private float firstImpactBurstFrontload = 0.85f;
         [SerializeField] private float firstImpactKickImpulseShare = 0.97f;
+        [Header("Impact Tiers & Recovery")]
+        [SerializeField] private bool useNormalizedTierThresholds = true;
+        [SerializeField] private float lowTierShare01 = 0.50f;
+        [SerializeField] private float midTierShare01 = 0.08f;
+        [SerializeField] private float tierHysteresisShare01 = 0.02f;
+        [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
+        [Header("Impact Tiers & Recovery (Legacy Absolute Fallback)")]
+        [SerializeField] private float lowRamMaxSpeed = 1.2f;
+        [SerializeField] private float lowRamHysteresisSpeed = 0.2f;
+        [SerializeField] private float highImpactMinSpeed = 5.2f;
+        [SerializeField] private float backstepDeadZoneSpeed = 0.12f;
+        [SerializeField] private AnimationCurve attackerBackstepCurve = new AnimationCurve(
+            new Keyframe(0f, 0f, 0f, 0.08f),
+            new Keyframe(0.35f, 0.08f, 0.35f, 0.8f),
+            new Keyframe(1f, 1f, 1f, 0f));
+        [SerializeField] private float attackerBackstepMaxImpulse = 5f;
+        [SerializeField] private float attackerHighForwardCancel01 = 0.92f;
+        [SerializeField] private float midHitRecoverySeconds = 0.18f;
+        [SerializeField] private float highHitRecoverySeconds = 0.24f;
+        [SerializeField] private float recoveryDriveScale = 0.08f;
+        [SerializeField] private float recoveryBrakeMultiplier = 2.2f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
@@ -168,6 +189,22 @@ namespace Sumo
         public float ImpactBurstDuration => impactBurstDuration;
         public float FirstImpactBurstFrontload => firstImpactBurstFrontload;
         public float FirstImpactKickImpulseShare => firstImpactKickImpulseShare;
+        public bool UseNormalizedTierThresholds => useNormalizedTierThresholds;
+        public float LowTierShare01 => lowTierShare01;
+        public float MidTierShare01 => midTierShare01;
+        public float TierHysteresisShare01 => tierHysteresisShare01;
+        public float BackstepDeadZoneShare01 => backstepDeadZoneShare01;
+        public float LowRamMaxSpeed => lowRamMaxSpeed;
+        public float LowRamHysteresisSpeed => lowRamHysteresisSpeed;
+        public float HighImpactMinSpeed => highImpactMinSpeed;
+        public float BackstepDeadZoneSpeed => backstepDeadZoneSpeed;
+        public AnimationCurve AttackerBackstepCurve => attackerBackstepCurve;
+        public float AttackerBackstepMaxImpulse => attackerBackstepMaxImpulse;
+        public float AttackerHighForwardCancel01 => attackerHighForwardCancel01;
+        public float MidHitRecoverySeconds => midHitRecoverySeconds;
+        public float HighHitRecoverySeconds => highHitRecoverySeconds;
+        public float RecoveryDriveScale => recoveryDriveScale;
+        public float RecoveryBrakeMultiplier => recoveryBrakeMultiplier;
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
@@ -232,6 +269,89 @@ namespace Sumo
                 Mathf.Max(0.01f, maxImpactSpeed - 0.01f));
             float top = Mathf.Max(lowerBound + 0.01f, maxImpactSpeed);
             return Mathf.InverseLerp(lowerBound, top, attackerForwardSpeed);
+        }
+
+        public float ResolveTierReferenceTopSpeed(float attackerReferenceTopSpeed)
+        {
+            float reference = attackerReferenceTopSpeed > 0.0001f
+                ? attackerReferenceTopSpeed
+                : maxImpactSpeed;
+            return Mathf.Max(0.05f, Mathf.Min(reference, maxImpactSpeed));
+        }
+
+        public void GetCollisionTierThresholds(
+            float attackerReferenceTopSpeed,
+            out float tierRefSpeed,
+            out float lowUpper,
+            out float highStart,
+            out float lowHysteresis,
+            out float backstepDeadZone)
+        {
+            tierRefSpeed = ResolveTierReferenceTopSpeed(attackerReferenceTopSpeed);
+
+            if (useNormalizedTierThresholds)
+            {
+                float lowShare = Mathf.Clamp(lowTierShare01, 0.05f, 0.95f);
+                float maxMidShare = Mathf.Max(0.01f, 0.99f - lowShare);
+                float midShare = Mathf.Clamp(midTierShare01, 0.01f, maxMidShare);
+
+                lowUpper = Mathf.Max(0f, tierRefSpeed * lowShare);
+                highStart = Mathf.Max(lowUpper + 0.01f, tierRefSpeed * (lowShare + midShare));
+                lowHysteresis = Mathf.Max(0f, tierRefSpeed * Mathf.Clamp01(tierHysteresisShare01));
+                backstepDeadZone = Mathf.Max(0f, tierRefSpeed * Mathf.Clamp01(backstepDeadZoneShare01));
+                return;
+            }
+
+            lowUpper = Mathf.Max(0f, lowRamMaxSpeed);
+            highStart = Mathf.Max(lowUpper + 0.01f, highImpactMinSpeed);
+            lowHysteresis = Mathf.Max(0f, lowRamHysteresisSpeed);
+            backstepDeadZone = Mathf.Max(0f, backstepDeadZoneSpeed);
+            tierRefSpeed = Mathf.Max(highStart + 0.01f, tierRefSpeed);
+        }
+
+        public SumoCollisionTier ClassifyCollisionTier(
+            float attackerForwardSpeed,
+            float attackerReferenceTopSpeed,
+            bool keepLowRamBias = false)
+        {
+            GetCollisionTierThresholds(
+                attackerReferenceTopSpeed,
+                out _,
+                out float lowUpper,
+                out float highStart,
+                out float lowHysteresis,
+                out _);
+
+            float lowThreshold = lowUpper;
+            if (keepLowRamBias)
+            {
+                lowThreshold += lowHysteresis;
+            }
+
+            if (attackerForwardSpeed <= lowThreshold)
+            {
+                return SumoCollisionTier.LowRam;
+            }
+
+            return attackerForwardSpeed >= highStart
+                ? SumoCollisionTier.HighImpact
+                : SumoCollisionTier.MidImpact;
+        }
+
+        public SumoCollisionTier ClassifyCollisionTier(float attackerForwardSpeed, bool keepLowRamBias = false)
+        {
+            return ClassifyCollisionTier(attackerForwardSpeed, maxImpactSpeed, keepLowRamBias);
+        }
+
+        public float EvaluateBackstepCurve01(float impactSpeed01)
+        {
+            float speed01 = Mathf.Clamp01(impactSpeed01);
+            if (attackerBackstepCurve == null || attackerBackstepCurve.length == 0)
+            {
+                return speed01 * speed01;
+            }
+
+            return Mathf.Clamp01(attackerBackstepCurve.Evaluate(speed01));
         }
 
         public void ApplyTo(Rigidbody targetRigidbody, SphereCollider targetCollider)
@@ -302,6 +422,31 @@ namespace Sumo
             impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.14f);
             firstImpactBurstFrontload = Mathf.Clamp01(firstImpactBurstFrontload);
             firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
+            lowTierShare01 = Mathf.Clamp(lowTierShare01, 0.05f, 0.95f);
+            float maxMidShare01 = Mathf.Max(0.01f, 0.99f - lowTierShare01);
+            midTierShare01 = Mathf.Clamp(midTierShare01, 0.01f, maxMidShare01);
+            tierHysteresisShare01 = Mathf.Clamp(tierHysteresisShare01, 0f, 0.2f);
+            backstepDeadZoneShare01 = Mathf.Clamp(backstepDeadZoneShare01, 0f, 0.2f);
+            lowRamMaxSpeed = Mathf.Clamp(lowRamMaxSpeed, 0f, Mathf.Max(0.05f, maxImpactSpeed - 0.5f));
+            lowRamHysteresisSpeed = Mathf.Clamp(lowRamHysteresisSpeed, 0f, 1.5f);
+            highImpactMinSpeed = Mathf.Clamp(
+                highImpactMinSpeed,
+                lowRamMaxSpeed + 0.05f,
+                Mathf.Max(lowRamMaxSpeed + 0.05f, maxImpactSpeed));
+            backstepDeadZoneSpeed = Mathf.Clamp(backstepDeadZoneSpeed, 0f, 1.25f);
+            attackerBackstepMaxImpulse = Mathf.Max(0f, attackerBackstepMaxImpulse);
+            attackerHighForwardCancel01 = Mathf.Clamp01(attackerHighForwardCancel01);
+            midHitRecoverySeconds = Mathf.Clamp(midHitRecoverySeconds, 0f, 1.5f);
+            highHitRecoverySeconds = Mathf.Clamp(highHitRecoverySeconds, midHitRecoverySeconds, 2f);
+            recoveryDriveScale = Mathf.Clamp01(recoveryDriveScale);
+            recoveryBrakeMultiplier = Mathf.Clamp(recoveryBrakeMultiplier, 1f, 5f);
+            if (attackerBackstepCurve == null || attackerBackstepCurve.length == 0)
+            {
+                attackerBackstepCurve = new AnimationCurve(
+                    new Keyframe(0f, 0f, 0f, 0.08f),
+                    new Keyframe(0.35f, 0.08f, 0.35f, 0.8f),
+                    new Keyframe(1f, 1f, 1f, 0f));
+            }
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);

@@ -26,36 +26,49 @@ namespace Sumo
 
     public readonly struct SumoInitialImpactResult
     {
+        public readonly SumoCollisionTier CollisionTier;
         public readonly float SpeedCurve;
+        public readonly float ImpactSpeed01;
         public readonly float AngleScale;
         public readonly float RelativeClosingScale;
         public readonly float DashMultiplier;
         public readonly float VictimImpulse;
-        public readonly float AttackerRecoilImpulse;
+        public readonly float AttackerBackstepImpulse;
+        public readonly float AttackerForwardCancel01;
+        public readonly float AttackerRecoverySeconds;
         public readonly float InitialRamEnergy;
         public readonly bool OpensRamState;
 
         public SumoInitialImpactResult(
+            SumoCollisionTier collisionTier,
             float speedCurve,
+            float impactSpeed01,
             float angleScale,
             float relativeClosingScale,
             float dashMultiplier,
             float victimImpulse,
-            float attackerRecoilImpulse,
+            float attackerBackstepImpulse,
+            float attackerForwardCancel01,
+            float attackerRecoverySeconds,
             float initialRamEnergy,
             bool opensRamState)
         {
+            CollisionTier = collisionTier;
             SpeedCurve = speedCurve;
+            ImpactSpeed01 = impactSpeed01;
             AngleScale = angleScale;
             RelativeClosingScale = relativeClosingScale;
             DashMultiplier = dashMultiplier;
             VictimImpulse = victimImpulse;
-            AttackerRecoilImpulse = attackerRecoilImpulse;
+            AttackerBackstepImpulse = attackerBackstepImpulse;
+            AttackerForwardCancel01 = attackerForwardCancel01;
+            AttackerRecoverySeconds = attackerRecoverySeconds;
             InitialRamEnergy = initialRamEnergy;
             OpensRamState = opensRamState;
         }
 
-        public bool HasImpact => VictimImpulse > 0.0001f;
+        public bool HasImpact => CollisionTier == SumoCollisionTier.MidImpact
+            || CollisionTier == SumoCollisionTier.HighImpact;
     }
 
     public readonly struct SumoRamTickResult
@@ -88,6 +101,10 @@ namespace Sumo
         private const float DefaultMinImpactSpeed = 2.2f;
         private const float DefaultImpactActivationMinSpeed = 0.25f;
         private const float DefaultMaxImpactSpeed = 10f;
+        private const float DefaultLowTierShare01 = 0.50f;
+        private const float DefaultMidTierShare01 = 0.08f;
+        private const float DefaultTierHysteresisShare01 = 0.02f;
+        private const float DefaultBackstepDeadZoneShare01 = 0.02f;
 
         public static SumoAttackerDecision ResolveAttacker(
             float firstApproachSpeed,
@@ -126,16 +143,107 @@ namespace Sumo
             return new SumoAttackerDecision(SumoAttackerRole.Neutral, SumoTieResolvedBy.NeutralWithinEpsilon);
         }
 
-        public static float EvaluateSpeedCurve(
+        public static void GetTierThresholds(
+            SumoBallPhysicsConfig config,
+            float attackerReferenceTopSpeed,
+            out float tierRefSpeed,
+            out float lowUpper,
+            out float highStart,
+            out float lowHysteresis,
+            out float backstepDeadZone)
+        {
+            if (config != null)
+            {
+                config.GetCollisionTierThresholds(
+                    attackerReferenceTopSpeed,
+                    out tierRefSpeed,
+                    out lowUpper,
+                    out highStart,
+                    out lowHysteresis,
+                    out backstepDeadZone);
+                return;
+            }
+
+            float rawReferenceSpeed = attackerReferenceTopSpeed > 0.0001f
+                ? attackerReferenceTopSpeed
+                : DefaultMaxImpactSpeed;
+            tierRefSpeed = Mathf.Max(0.05f, Mathf.Min(rawReferenceSpeed, DefaultMaxImpactSpeed));
+            lowUpper = tierRefSpeed * DefaultLowTierShare01;
+            highStart = Mathf.Max(lowUpper + 0.01f, tierRefSpeed * (DefaultLowTierShare01 + DefaultMidTierShare01));
+            lowHysteresis = tierRefSpeed * DefaultTierHysteresisShare01;
+            backstepDeadZone = tierRefSpeed * DefaultBackstepDeadZoneShare01;
+        }
+
+        public static SumoCollisionTier ClassifyCollisionTier(
+            SumoBallPhysicsConfig config,
+            float attackerForwardSpeed,
+            float attackerReferenceTopSpeed,
+            bool keepLowRamBias)
+        {
+            GetTierThresholds(
+                config,
+                attackerReferenceTopSpeed,
+                out _,
+                out float lowUpper,
+                out float highStart,
+                out float lowHysteresis,
+                out _);
+
+            float lowThreshold = lowUpper;
+            if (keepLowRamBias)
+            {
+                lowThreshold += lowHysteresis;
+            }
+
+            if (attackerForwardSpeed <= lowThreshold)
+            {
+                return SumoCollisionTier.LowRam;
+            }
+
+            return attackerForwardSpeed >= highStart
+                ? SumoCollisionTier.HighImpact
+                : SumoCollisionTier.MidImpact;
+        }
+
+        public static float ComputeLowRamSeedEnergy(
             SumoBallPhysicsConfig config,
             float attackerForwardSpeed,
             float attackerReferenceTopSpeed = 0f)
+        {
+            GetTierThresholds(
+                config,
+                attackerReferenceTopSpeed,
+                out _,
+                out float lowUpper,
+                out _,
+                out _,
+                out _);
+
+            float lowRamMaxSpeed = Mathf.Max(0.05f, lowUpper);
+            float low01 = Mathf.Clamp01(attackerForwardSpeed / lowRamMaxSpeed);
+
+            float minEnergy = config != null ? config.RamMinEnergy : 0.5f;
+            float maxEnergy = config != null ? config.RamMaxEnergy : 7.5f;
+            float stopThreshold = config != null ? config.RamStopEnergyThreshold : 0.08f;
+
+            float startMin = Mathf.Max(stopThreshold + 0.05f, minEnergy * 0.7f);
+            float startMax = Mathf.Clamp(Mathf.Lerp(minEnergy, minEnergy + 1.25f, 0.9f), startMin, maxEnergy);
+            return Mathf.Lerp(startMin, startMax, low01);
+        }
+
+        public static float EvaluateSpeedCurve(
+            SumoBallPhysicsConfig config,
+            float attackerForwardSpeed,
+            float attackerReferenceTopSpeed = 0f,
+            float overrideLowerBound = float.NegativeInfinity)
         {
             float minImpactSpeed = config != null ? config.MinImpactSpeed : DefaultMinImpactSpeed;
             float activationMinSpeed = config != null
                 ? config.ImpactActivationMinSpeed
                 : DefaultImpactActivationMinSpeed;
-            float lowerBound = Mathf.Min(minImpactSpeed, activationMinSpeed);
+            float lowerBound = float.IsNegativeInfinity(overrideLowerBound)
+                ? Mathf.Min(minImpactSpeed, activationMinSpeed)
+                : Mathf.Max(0f, overrideLowerBound);
             float maxImpactSpeed = ResolveReferenceTopSpeed(config, lowerBound, attackerReferenceTopSpeed);
             float speed01 = Mathf.InverseLerp(
                 lowerBound,
@@ -159,100 +267,104 @@ namespace Sumo
             float directionDot,
             float dashMultiplier)
         {
-            float minImpactSpeed = config != null ? config.MinImpactSpeed : DefaultMinImpactSpeed;
-            float activationMinSpeed = config != null
-                ? config.ImpactActivationMinSpeed
-                : DefaultImpactActivationMinSpeed;
-            float lowerBound = Mathf.Min(minImpactSpeed, activationMinSpeed);
-            if (attackerForwardSpeed < activationMinSpeed)
+            GetTierThresholds(
+                config,
+                attackerReferenceTopSpeed,
+                out float tierRefSpeed,
+                out float lowUpper,
+                out _,
+                out _,
+                out float backstepDeadZone);
+
+            SumoCollisionTier tier = ClassifyCollisionTier(
+                config,
+                attackerForwardSpeed,
+                tierRefSpeed,
+                keepLowRamBias: false);
+            if (tier == SumoCollisionTier.LowRam)
             {
                 return default;
             }
 
-            float maxImpactSpeed = ResolveReferenceTopSpeed(config, lowerBound, attackerReferenceTopSpeed);
-            float speedCurve = EvaluateSpeedCurve(config, attackerForwardSpeed, maxImpactSpeed);
-            float speedCurve01 = Mathf.Clamp01(speedCurve);
+            float impactLowerBound = Mathf.Max(
+                lowUpper + 0.01f,
+                config != null ? config.ImpactActivationMinSpeed : DefaultImpactActivationMinSpeed);
+            float maxImpactSpeed = ResolveReferenceTopSpeed(config, impactLowerBound, tierRefSpeed);
+
             float speed01 = Mathf.InverseLerp(
-                lowerBound,
-                Mathf.Max(lowerBound + 0.01f, maxImpactSpeed),
+                impactLowerBound,
+                Mathf.Max(impactLowerBound + 0.01f, maxImpactSpeed),
                 attackerForwardSpeed);
+            speed01 = Mathf.Clamp01(speed01);
+            float speedCurve = EvaluateSpeedCurve(config, attackerForwardSpeed, maxImpactSpeed, impactLowerBound);
 
-            float angleExponent = config != null ? config.ImpactAngleExponent : 1.15f;
             float direction01 = Mathf.Clamp01(directionDot);
+            float angleExponent = config != null ? config.ImpactAngleExponent : 1.15f;
             float shapedDirection = Mathf.Pow(direction01, Mathf.Max(0.01f, angleExponent));
-            float headOn = config != null ? config.HeadOnImpactMultiplier : 2.25f;
             float glancing = config != null ? config.GlancingImpactMultiplier : 0.3f;
+            float headOn = config != null ? config.HeadOnImpactMultiplier : 2.25f;
             float angleScale = Mathf.Lerp(glancing, headOn, shapedDirection);
-
-            float closing01 = Mathf.Clamp01(relativeClosingSpeed / Mathf.Max(0.01f, maxImpactSpeed));
-            float relativeClosingScale = 1f + (config != null ? config.RelativeClosingBonus : 0.28f) * closing01;
-
-            float dash = Mathf.Max(1f, dashMultiplier);
-            float dashScale = Mathf.Lerp(1f, dash, speedCurve01);
+            float relativeClosingScale = 1f + Mathf.Clamp01(relativeClosingSpeed / Mathf.Max(0.01f, maxImpactSpeed))
+                * (config != null ? config.RelativeClosingBonus : 0.28f);
 
             float baseImpactImpulse = config != null ? config.BaseImpactImpulse : 42f;
             float maxImpactImpulse = config != null ? config.MaxImpactImpulse : 92f;
-            float topSpeedBonus = config != null ? config.ImpactTopSpeedBonus : 1.45f;
-            float lowSpeedSuppression = Mathf.Pow(speed01, 1.85f);
-            float topSpeedScale = 1f + Mathf.Max(0f, topSpeedBonus) * speed01 * speed01 * speed01 * 1.95f;
-            float baseShapedImpulse = Mathf.Lerp(baseImpactImpulse * 0.14f, maxImpactImpulse * 0.82f, lowSpeedSuppression);
-            float firstImpactForce = baseShapedImpulse * topSpeedScale;
-            firstImpactForce *= Mathf.Max(0f, angleScale) * Mathf.Max(1f, relativeClosingScale) * Mathf.Max(1f, dashScale);
-
-            float readableFloorScale = config != null ? config.HighSpeedReadableFloor : 0.62f;
-            float readableFloor = maxImpactImpulse
-                * Mathf.Clamp01(readableFloorScale)
-                * speed01
-                * speed01
-                * 0.22f;
-
-            float speedSq = speed01 * speed01;
-            float momentumCap = attackerForwardSpeed * Mathf.Lerp(0.55f, 1.65f, speedSq);
-            float topSpeedCap = maxImpactSpeed * Mathf.Lerp(0.24f, 1.40f, speedSq);
-            float configuredCap = maxImpactImpulse * Mathf.Lerp(0.28f, 1.0f, speedSq);
-            float dynamicImpactCap = Mathf.Max(0.8f, Mathf.Min(configuredCap, Mathf.Max(momentumCap, topSpeedCap)));
-            float aggressiveBounceFloor = Mathf.Min(
-                maxImpactImpulse,
-                attackerForwardSpeed * Mathf.Lerp(0.95f, 1.75f, speedCurve01));
-            dynamicImpactCap = Mathf.Min(maxImpactImpulse, Mathf.Max(dynamicImpactCap, aggressiveBounceFloor));
-
-            float baseVictimImpulse = Mathf.Clamp(Mathf.Max(firstImpactForce, readableFloor, aggressiveBounceFloor), 0f, dynamicImpactCap);
-            if (baseVictimImpulse <= 0.0001f)
-            {
-                return default;
-            }
-
-            float arcadeThreshold01 = config != null ? config.FirstImpactArcadeThreshold01 : 0.32f;
-            float charged01 = speed01 <= arcadeThreshold01
-                ? 0f
-                : Mathf.Clamp01((speed01 - arcadeThreshold01) / Mathf.Max(0.01f, 1f - arcadeThreshold01));
-            float chargedSmooth = charged01 * charged01 * (3f - 2f * charged01);
-            float maxArcadeBoost = config != null ? config.FirstImpactArcadeBoost : 5.6f;
-            float maxArcadeCapBoost = config != null ? config.FirstImpactArcadeCapBoost : 4.2f;
-            float arcadeBoost = Mathf.Lerp(1f, Mathf.Max(1f, maxArcadeBoost), chargedSmooth);
-            float arcadeCapMultiplier = Mathf.Lerp(1f, Mathf.Max(1f, maxArcadeCapBoost), chargedSmooth);
-            float victimImpulse = Mathf.Min(
-                maxImpactImpulse,
-                Mathf.Min(baseVictimImpulse * arcadeBoost, dynamicImpactCap * arcadeCapMultiplier));
-
+            float tierScale = tier == SumoCollisionTier.MidImpact ? 0.62f : 1f;
+            float victimImpulse = Mathf.Lerp(baseImpactImpulse * 0.18f, maxImpactImpulse, speedCurve);
+            victimImpulse *= tierScale;
+            float maxSpeedVictimScale = Mathf.Lerp(1f, 1f / 3f, speed01);
+            victimImpulse *= maxSpeedVictimScale;
+            victimImpulse = Mathf.Clamp(victimImpulse, 0f, maxImpactImpulse);
             if (victimImpulse <= 0.0001f)
             {
                 return default;
             }
 
-            float recoilScale = config != null ? config.ImpactAttackerRecoilScale : 0.17f;
-            float attackerRecoilImpulse = victimImpulse * Mathf.Clamp01(recoilScale);
-            float initialRamEnergy = ComputeInitialRamEnergy(config, baseVictimImpulse, attackerForwardSpeed, maxImpactSpeed, direction01, dashScale);
+            float backstepSpeed01 = Mathf.InverseLerp(
+                lowUpper + Mathf.Max(0f, backstepDeadZone),
+                Mathf.Max(lowUpper + Mathf.Max(0f, backstepDeadZone) + 0.01f, maxImpactSpeed),
+                attackerForwardSpeed);
+            backstepSpeed01 = Mathf.Clamp01(backstepSpeed01);
+
+            float backstepCurve01 = config != null
+                ? config.EvaluateBackstepCurve01(backstepSpeed01)
+                : backstepSpeed01 * backstepSpeed01;
+            float backstepMaxImpulse = config != null ? config.AttackerBackstepMaxImpulse : 5f;
+            float attackerBackstepImpulse = Mathf.Max(0f, backstepMaxImpulse * backstepCurve01);
+            attackerBackstepImpulse *= 2f;
+
+            float attackerForwardCancel01 = 0f;
+            if (tier == SumoCollisionTier.HighImpact)
+            {
+                float configuredCancel = config != null ? config.AttackerHighForwardCancel01 : 0.92f;
+                attackerForwardCancel01 = Mathf.Clamp01(Mathf.Lerp(configuredCancel * 0.75f, configuredCancel, backstepCurve01));
+            }
+
+            float attackerRecoverySeconds = tier == SumoCollisionTier.HighImpact
+                ? (config != null ? config.HighHitRecoverySeconds : 0.24f)
+                : (config != null ? config.MidHitRecoverySeconds : 0.18f);
+
+            float initialRamEnergy = ComputeInitialRamEnergy(
+                config,
+                victimImpulse,
+                attackerForwardSpeed,
+                maxImpactSpeed,
+                direction01,
+                1f);
             float stopThreshold = config != null ? config.RamStopEnergyThreshold : 0.08f;
             bool opensRamState = initialRamEnergy > stopThreshold;
 
             return new SumoInitialImpactResult(
+                tier,
                 speedCurve,
+                speed01,
                 angleScale,
                 relativeClosingScale,
-                dashScale,
+                Mathf.Max(1f, dashMultiplier),
                 victimImpulse,
-                attackerRecoilImpulse,
+                attackerBackstepImpulse,
+                attackerForwardCancel01,
+                attackerRecoverySeconds,
                 initialRamEnergy,
                 opensRamState);
         }
@@ -265,7 +377,8 @@ namespace Sumo
             float attackerForwardSpeed,
             float directionDot,
             bool isPressing,
-            float contactBlend01 = 1f)
+            float contactBlend01 = 1f,
+            float minRamPressureSpeedOverride = -1f)
         {
             float dt = Mathf.Max(0f, deltaTime);
             if (ramEnergy <= 0.0001f || dt <= 0f)
@@ -273,7 +386,9 @@ namespace Sumo
                 return new SumoRamTickResult(0f, 0f, ramEnergy, 0f, true);
             }
 
-            float minRamPressureSpeed = config != null ? config.MinRamPressureSpeed : 1.6f;
+            float minRamPressureSpeed = minRamPressureSpeedOverride >= 0f
+                ? minRamPressureSpeedOverride
+                : (config != null ? config.MinRamPressureSpeed : 1.6f);
             float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
             float pressure01 = Mathf.InverseLerp(
                 minRamPressureSpeed,
@@ -387,9 +502,10 @@ namespace Sumo
             float attackerReferenceTopSpeed)
         {
             float configTopSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
-            float referenceTopSpeed = attackerReferenceTopSpeed > 0.0001f
+            float referenceTopSpeedRaw = attackerReferenceTopSpeed > 0.0001f
                 ? attackerReferenceTopSpeed
                 : configTopSpeed;
+            float referenceTopSpeed = Mathf.Min(referenceTopSpeedRaw, configTopSpeed);
             return Mathf.Max(minImpactSpeed + 0.01f, referenceTopSpeed);
         }
 

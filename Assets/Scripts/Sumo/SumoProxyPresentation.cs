@@ -679,10 +679,7 @@ namespace Sumo
 
             bool activeWindow = hasSignal || now < _remoteVictimViewLockUntil;
             float desiredBlend = activeWindow
-                ? Mathf.Clamp(
-                    Mathf.Max(_remoteVictimViewLockTargetBlend, remoteVictimViewLockMinBlend),
-                    remoteVictimViewLockMinBlend,
-                    remoteVictimViewLockMaxBlend)
+                ? 1f
                 : 0f;
 
             float speed = desiredBlend >= _remoteVictimViewLockBlend
