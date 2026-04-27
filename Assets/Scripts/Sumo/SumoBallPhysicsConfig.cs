@@ -58,6 +58,13 @@ namespace Sumo
         [SerializeField] private float firstImpactBurstFrontload = 0.85f;
         [SerializeField] private float firstImpactKickImpulseShare = 0.97f;
 
+        [Header("Impact Tiering")]
+        [SerializeField] private bool useNormalizedTierThresholds = true;
+        [SerializeField] private float lowTierShare01 = 0.77f;
+        [SerializeField] private float midTierShare01 = 0.15f;
+        [SerializeField] private float tierHysteresisShare01 = 0.02f;
+        [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
+
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
         [SerializeField] private bool resolveTieByLowerKey = true;
@@ -168,6 +175,11 @@ namespace Sumo
         public float ImpactBurstDuration => impactBurstDuration;
         public float FirstImpactBurstFrontload => firstImpactBurstFrontload;
         public float FirstImpactKickImpulseShare => firstImpactKickImpulseShare;
+        public bool UseNormalizedTierThresholds => useNormalizedTierThresholds;
+        public float LowTierShare01 => lowTierShare01;
+        public float MidTierShare01 => midTierShare01;
+        public float TierHysteresisShare01 => tierHysteresisShare01;
+        public float BackstepDeadZoneShare01 => backstepDeadZoneShare01;
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
@@ -302,6 +314,10 @@ namespace Sumo
             impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.14f);
             firstImpactBurstFrontload = Mathf.Clamp01(firstImpactBurstFrontload);
             firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
+            lowTierShare01 = Mathf.Clamp01(lowTierShare01);
+            midTierShare01 = Mathf.Clamp(midTierShare01, 0f, 1f - lowTierShare01);
+            tierHysteresisShare01 = Mathf.Clamp(tierHysteresisShare01, 0f, 0.25f);
+            backstepDeadZoneShare01 = Mathf.Clamp(backstepDeadZoneShare01, 0f, 0.25f);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);

@@ -46,6 +46,8 @@ namespace Sumo
         public bool ReimpactSuppressedUntilHardBreak;
         public SumoPairState State;
         public SumoTieResolvedBy TieResolvedBy;
+        public int LastTierAttackerRef;
+        public SumoImpactTier LastResolvedImpactTier;
         public float EnterFirstApproachSpeed;
         public float EnterSecondApproachSpeed;
         public float EnterRelativeClosingSpeed;

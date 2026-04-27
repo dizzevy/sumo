@@ -283,6 +283,8 @@ namespace Sumo
         private const float ActiveCombatVictimRamPredictedResponseShare = 0.02f;
         private const float ActiveCombatPenetrationSlopBonus = 0.025f;
         private const int PredictedRollbackHistoryTicks = 192;
+        private const float MidHighImpactPlanarSpeedCutScale = 0.5f;
+        private const float LowTierRamSeedEnergyPadding = 0.01f;
 
         private void Awake()
         {
@@ -2654,12 +2656,12 @@ namespace Sumo
 
             if (firstApproachSpeed <= 0.0001f)
             {
-                firstApproachSpeed = GetApproachSpeed(first, first._rigidbody.linearVelocity, firstToSecond);
+                firstApproachSpeed = GetPhysicalApproachSpeed(first._rigidbody.linearVelocity, firstToSecond);
             }
 
             if (secondApproachSpeed <= 0.0001f)
             {
-                secondApproachSpeed = GetApproachSpeed(second, second._rigidbody.linearVelocity, -firstToSecond);
+                secondApproachSpeed = GetPhysicalApproachSpeed(second._rigidbody.linearVelocity, -firstToSecond);
             }
 
             int firstKey = pairState.FirstRef != 0 ? pairState.FirstRef : GetControllerKey(first);
@@ -2742,22 +2744,100 @@ namespace Sumo
             Vector3 attackDirection = ResolveAttackDirection(attacker, attackerVelocity, attackerToVictim);
             float directionDot = Mathf.Clamp01(Vector3.Dot(attackDirection, attackerToVictim));
 
-            float entryForwardSpeed = attacker == first ? firstApproachSpeed : secondApproachSpeed;
-            float currentForwardSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity, attackerToVictim));
+            int attackerKey = GetControllerKey(attacker);
+            float entryForwardSpeedPhysical = attacker == first ? firstApproachSpeed : secondApproachSpeed;
+            entryForwardSpeedPhysical = SanitizeNonNegativeFinite(entryForwardSpeedPhysical);
+            float currentForwardSpeedPhysical = GetPhysicalApproachSpeed(attackerVelocity, attackerToVictim);
             float intentForwardSpeed = GetIntentApproachSpeed(attacker, attackerToVictim, attackerVelocity);
+            float planarPhysicalSpeed = SanitizeNonNegativeFinite(GetPlanarPhysicalSpeed(attackerVelocity));
+
+            float attackerForwardSpeed = Mathf.Max(entryForwardSpeedPhysical, currentForwardSpeedPhysical);
+            attackerForwardSpeed = Mathf.Min(attackerForwardSpeed, planarPhysicalSpeed);
+            attackerForwardSpeed = SanitizeNonNegativeFinite(attackerForwardSpeed);
 
             float relativeClosingSpeed = pairState.EnterRelativeClosingSpeed;
             float currentRelativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, attackerToVictim));
             relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, currentRelativeClosingSpeed);
-
-            float attackerForwardSpeed = Mathf.Max(entryForwardSpeed, Mathf.Max(currentForwardSpeed, intentForwardSpeed));
             relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, attackerForwardSpeed);
+            relativeClosingSpeed = SanitizeNonNegativeFinite(relativeClosingSpeed);
+
+            float tierReferenceTopSpeed = GetAttackerTierReferenceTopSpeed(attacker);
+            bool hasPreviousTier = pairState.LastTierAttackerRef == attackerKey
+                && pairState.LastResolvedImpactTier != SumoImpactTier.Unknown;
+            SumoImpactTier previousTier = hasPreviousTier
+                ? pairState.LastResolvedImpactTier
+                : SumoImpactTier.Unknown;
+
+            SumoImpactTier selectedTier = SumoImpactResolver.ResolveImpactTier(
+                attacker.physicsConfig,
+                tierReferenceTopSpeed,
+                attackerForwardSpeed,
+                previousTier,
+                hasPreviousTier,
+                out SumoImpactTierThresholds tierThresholds);
+
+            pairState.LastTierAttackerRef = attackerKey;
+            pairState.LastResolvedImpactTier = selectedTier;
+
+            if (selectedTier == SumoImpactTier.Low)
+            {
+                float lowTierSeedEnergy = ResolveLowTierRamSeedEnergy(attacker, pairState.RamEnergy);
+                bool startedLowRam = TryStartRamWithoutImpact(
+                    ref pairState,
+                    currentTick,
+                    attacker,
+                    victim,
+                    attackerToVictim,
+                    attackerForwardSpeed,
+                    directionDot,
+                    mode,
+                    lowTierSeedEnergy,
+                    true);
+
+                LogTierCheck(
+                    attacker,
+                    victim,
+                    currentTick,
+                    mode,
+                    entryForwardSpeedPhysical,
+                    currentForwardSpeedPhysical,
+                    planarPhysicalSpeed,
+                    intentForwardSpeed,
+                    attackerForwardSpeed,
+                    tierThresholds.TierRefSpeed,
+                    tierThresholds.LowUpper,
+                    tierThresholds.HighStart,
+                    selectedTier,
+                    false,
+                    planarPhysicalSpeed,
+                    planarPhysicalSpeed);
+
+                return startedLowRam;
+            }
 
             float impactActivationMinSpeed = attacker.physicsConfig != null
                 ? attacker.physicsConfig.ImpactActivationMinSpeed
                 : FallbackImpactActivationMinSpeed;
             if (attackerForwardSpeed < impactActivationMinSpeed)
             {
+                LogTierCheck(
+                    attacker,
+                    victim,
+                    currentTick,
+                    mode,
+                    entryForwardSpeedPhysical,
+                    currentForwardSpeedPhysical,
+                    planarPhysicalSpeed,
+                    intentForwardSpeed,
+                    attackerForwardSpeed,
+                    tierThresholds.TierRefSpeed,
+                    tierThresholds.LowUpper,
+                    tierThresholds.HighStart,
+                    selectedTier,
+                    false,
+                    planarPhysicalSpeed,
+                    planarPhysicalSpeed);
+
                 return false;
             }
 
@@ -2789,7 +2869,7 @@ namespace Sumo
                             $"SumoCollisionController: impact cycle suppressed->ram {attacker.name} -> {victim.name}; state={pairState.State}; ramEnergy={pairState.RamEnergy:0.000}/{stopThreshold:0.000}; tick={currentTick}; mode={mode}");
                     }
 
-                    return TryStartRamWithoutImpact(
+                    bool startedSuppressedRam = TryStartRamWithoutImpact(
                         ref pairState,
                         currentTick,
                         attacker,
@@ -2798,6 +2878,26 @@ namespace Sumo
                         attackerForwardSpeed,
                         directionDot,
                         mode);
+
+                    LogTierCheck(
+                        attacker,
+                        victim,
+                        currentTick,
+                        mode,
+                        entryForwardSpeedPhysical,
+                        currentForwardSpeedPhysical,
+                        planarPhysicalSpeed,
+                        intentForwardSpeed,
+                        attackerForwardSpeed,
+                        tierThresholds.TierRefSpeed,
+                        tierThresholds.LowUpper,
+                        tierThresholds.HighStart,
+                        selectedTier,
+                        false,
+                        planarPhysicalSpeed,
+                        planarPhysicalSpeed);
+
+                    return startedSuppressedRam;
                 }
             }
 
@@ -2821,6 +2921,24 @@ namespace Sumo
 
             if (!impactResult.HasImpact)
             {
+                LogTierCheck(
+                    attacker,
+                    victim,
+                    currentTick,
+                    mode,
+                    entryForwardSpeedPhysical,
+                    currentForwardSpeedPhysical,
+                    planarPhysicalSpeed,
+                    intentForwardSpeed,
+                    attackerForwardSpeed,
+                    tierThresholds.TierRefSpeed,
+                    tierThresholds.LowUpper,
+                    tierThresholds.HighStart,
+                    selectedTier,
+                    false,
+                    planarPhysicalSpeed,
+                    planarPhysicalSpeed);
+
                 return false;
             }
 
@@ -2831,7 +2949,7 @@ namespace Sumo
             pairState.State = SumoPairState.InitialImpact;
             pairState.AttackerController = attacker;
             pairState.VictimController = victim;
-            pairState.AttackerRef = GetControllerKey(attacker);
+            pairState.AttackerRef = attackerKey;
             pairState.VictimRef = GetControllerKey(victim);
             pairState.StartTick = currentTick;
             pairState.LastImpactTick = currentTick;
@@ -2857,6 +2975,19 @@ namespace Sumo
             pairState.ReimpactSuppressedUntilHardBreak = true;
             ApplyInitialImpactKickoff(ref pairState, attacker, victim, mode);
             ApplyInitialImpactBurstStep(ref pairState, attacker, victim, true, mode);
+
+            bool shouldApplySpeedCut = selectedTier == SumoImpactTier.Mid || selectedTier == SumoImpactTier.High;
+            bool speedCutApplied = false;
+            float oldAttackerPlanarSpeed = planarPhysicalSpeed;
+            float newAttackerPlanarSpeed = planarPhysicalSpeed;
+            if (shouldApplySpeedCut)
+            {
+                speedCutApplied = ApplyAttackerPlanarSpeedCut(
+                    attacker._rigidbody,
+                    MidHighImpactPlanarSpeedCutScale,
+                    out oldAttackerPlanarSpeed,
+                    out newAttackerPlanarSpeed);
+            }
 
             if (mode == SimulationMode.Authoritative)
             {
@@ -2909,6 +3040,24 @@ namespace Sumo
                 PredictedPairLastImpactTick[pairState.PairKey] = currentTick;
             }
 
+            LogTierCheck(
+                attacker,
+                victim,
+                currentTick,
+                mode,
+                entryForwardSpeedPhysical,
+                currentForwardSpeedPhysical,
+                planarPhysicalSpeed,
+                intentForwardSpeed,
+                attackerForwardSpeed,
+                tierThresholds.TierRefSpeed,
+                tierThresholds.LowUpper,
+                tierThresholds.HighStart,
+                selectedTier,
+                speedCutApplied,
+                oldAttackerPlanarSpeed,
+                newAttackerPlanarSpeed);
+
             if (logImpacts || attacker.logImpacts || victim.logImpacts)
             {
                 Debug.Log(
@@ -2926,7 +3075,9 @@ namespace Sumo
             Vector3 attackerToVictim,
             float attackerForwardSpeed,
             float directionDot,
-            SimulationMode mode)
+            SimulationMode mode,
+            float forcedSeededRamEnergy = -1f,
+            bool ignoreMinPressureSpeed = false)
         {
             if (attacker == null
                 || victim == null
@@ -2940,7 +3091,7 @@ namespace Sumo
 
             float minPressureSpeed = GetPairMinRamPressureSpeed(attacker, victim);
             float minDirectionDot = GetPairRamMinDirectionDot(attacker, victim);
-            if (attackerForwardSpeed < minPressureSpeed || directionDot < minDirectionDot)
+            if ((!ignoreMinPressureSpeed && attackerForwardSpeed < minPressureSpeed) || directionDot < minDirectionDot)
             {
                 return false;
             }
@@ -2962,7 +3113,10 @@ namespace Sumo
             ramDirection.Normalize();
 
             float stopThreshold = GetRamStopThreshold(attacker);
-            float seededRamEnergy = pairState.RamEnergy;
+            float seededRamEnergy = forcedSeededRamEnergy >= 0f
+                ? forcedSeededRamEnergy
+                : pairState.RamEnergy;
+            seededRamEnergy = SanitizeNonNegativeFinite(seededRamEnergy);
             if (seededRamEnergy <= stopThreshold)
             {
                 return false;
@@ -3851,6 +4005,32 @@ namespace Sumo
             return Mathf.Max(velocityApproach, intentApproach);
         }
 
+        private static float GetPhysicalApproachSpeed(Vector3 sourceVelocity, Vector3 towardDirection)
+        {
+            if (towardDirection.sqrMagnitude < 0.0001f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Max(0f, Vector3.Dot(sourceVelocity, towardDirection));
+        }
+
+        private static float GetPlanarPhysicalSpeed(Vector3 velocity)
+        {
+            Vector3 planarVelocity = new Vector3(velocity.x, 0f, velocity.z);
+            return planarVelocity.magnitude;
+        }
+
+        private static float SanitizeNonNegativeFinite(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+            {
+                return 0f;
+            }
+
+            return value;
+        }
+
         private static float GetPairTieSpeedEpsilon(SumoCollisionController a, SumoCollisionController b)
         {
             return Mathf.Max(GetTieSpeedEpsilon(a), GetTieSpeedEpsilon(b));
@@ -4018,6 +4198,53 @@ namespace Sumo
             return FallbackAttackerReferenceTopSpeed;
         }
 
+        private static float GetAttackerTierReferenceTopSpeed(SumoCollisionController attacker)
+        {
+            float ballTopSpeed = attacker != null && attacker.ballController != null
+                ? Mathf.Max(0.01f, attacker.ballController.MaxSpeed)
+                : FallbackAttackerReferenceTopSpeed;
+            float maxImpactSpeed = attacker != null && attacker.physicsConfig != null
+                ? Mathf.Max(0.01f, attacker.physicsConfig.MaxImpactSpeed)
+                : FallbackAttackerReferenceTopSpeed;
+            return Mathf.Max(0.01f, Mathf.Min(ballTopSpeed, maxImpactSpeed));
+        }
+
+        private static float ResolveLowTierRamSeedEnergy(SumoCollisionController attacker, float currentRamEnergy)
+        {
+            float stopThreshold = GetRamStopThreshold(attacker);
+            float minSeedEnergy = stopThreshold + LowTierRamSeedEnergyPadding;
+            float maxSeedEnergy = attacker != null && attacker.physicsConfig != null
+                ? Mathf.Max(minSeedEnergy, attacker.physicsConfig.RamMaxEnergy)
+                : Mathf.Max(minSeedEnergy, 7.5f);
+            float seededEnergy = Mathf.Max(SanitizeNonNegativeFinite(currentRamEnergy), minSeedEnergy);
+            return Mathf.Clamp(seededEnergy, minSeedEnergy, maxSeedEnergy);
+        }
+
+        private static bool ApplyAttackerPlanarSpeedCut(
+            Rigidbody attackerBody,
+            float planarScale,
+            out float oldPlanarSpeed,
+            out float newPlanarSpeed)
+        {
+            oldPlanarSpeed = 0f;
+            newPlanarSpeed = 0f;
+
+            if (attackerBody == null || attackerBody.isKinematic)
+            {
+                return false;
+            }
+
+            Vector3 oldVelocity = attackerBody.linearVelocity;
+            Vector3 planarVelocity = new Vector3(oldVelocity.x, 0f, oldVelocity.z);
+            Vector3 newPlanarVelocity = planarVelocity * Mathf.Clamp01(planarScale);
+            Vector3 newVelocity = new Vector3(newPlanarVelocity.x, oldVelocity.y, newPlanarVelocity.z);
+
+            oldPlanarSpeed = planarVelocity.magnitude;
+            newPlanarSpeed = newPlanarVelocity.magnitude;
+            attackerBody.linearVelocity = newVelocity;
+            return true;
+        }
+
         private static bool RequiresPhysicalContact(SumoPairState state)
         {
             return state == SumoPairState.InitialImpact || state == SumoPairState.Ramming;
@@ -4055,6 +4282,35 @@ namespace Sumo
             }
 
             return planarSpeed * Mathf.Clamp01(directionDot);
+        }
+
+        private void LogTierCheck(
+            SumoCollisionController attacker,
+            SumoCollisionController victim,
+            int currentTick,
+            SimulationMode mode,
+            float entryPhysical,
+            float currentPhysical,
+            float planarPhysical,
+            float intentForwardInfo,
+            float selectedTierSpeed,
+            float tierRefSpeed,
+            float lowUpper,
+            float highStart,
+            SumoImpactTier tier,
+            bool speedCutApplied,
+            float oldAttackerPlanarSpeed,
+            float newAttackerPlanarSpeed)
+        {
+            if (!(logImpacts || (attacker != null && attacker.logImpacts) || (victim != null && victim.logImpacts)))
+            {
+                return;
+            }
+
+            string attackerName = attacker != null ? attacker.name : "<null>";
+            string victimName = victim != null ? victim.name : "<null>";
+            Debug.Log(
+                $"SumoCollisionController: tier-check {attackerName} -> {victimName}; entryPhysical={entryPhysical:0.000}; currentPhysical={currentPhysical:0.000}; planarPhysical={planarPhysical:0.000}; intentForwardInfo={intentForwardInfo:0.000}; selectedTierSpeed={selectedTierSpeed:0.000}; tierRefSpeed={tierRefSpeed:0.000}; lowUpper={lowUpper:0.000}; highStart={highStart:0.000}; tier={tier}; speedCutApplied={speedCutApplied}; oldAttackerPlanarSpeed={oldAttackerPlanarSpeed:0.000}; newAttackerPlanarSpeed={newAttackerPlanarSpeed:0.000}; tick={currentTick}; mode={mode}");
         }
 
         private bool IsPredictedImpactRuntimeEnabled()
@@ -4328,8 +4584,8 @@ namespace Sumo
             Vector3 firstVelocity = snapshotSelfIsFirst ? snapshot.SelfVelocity : snapshot.OtherVelocity;
             Vector3 secondVelocity = snapshotSelfIsFirst ? snapshot.OtherVelocity : snapshot.SelfVelocity;
 
-            float firstApproachSpeed = GetApproachSpeed(first, firstVelocity, firstToSecond);
-            float secondApproachSpeed = GetApproachSpeed(second, secondVelocity, -firstToSecond);
+            float firstApproachSpeed = GetPhysicalApproachSpeed(firstVelocity, firstToSecond);
+            float secondApproachSpeed = GetPhysicalApproachSpeed(secondVelocity, -firstToSecond);
             float relativeClosing = Mathf.Max(0f, Vector3.Dot(firstVelocity - secondVelocity, firstToSecond));
             relativeClosing = Mathf.Max(relativeClosing, snapshot.RelativeClosingSpeed);
 

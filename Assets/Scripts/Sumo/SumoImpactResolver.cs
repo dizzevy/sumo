@@ -83,11 +83,38 @@ namespace Sumo
         public bool HasForce => VictimAcceleration > 0.0001f || AttackerAcceleration > 0.0001f;
     }
 
+    public enum SumoImpactTier : byte
+    {
+        Unknown = 0,
+        Low = 1,
+        Mid = 2,
+        High = 3
+    }
+
+    public readonly struct SumoImpactTierThresholds
+    {
+        public readonly float TierRefSpeed;
+        public readonly float LowUpper;
+        public readonly float HighStart;
+
+        public SumoImpactTierThresholds(float tierRefSpeed, float lowUpper, float highStart)
+        {
+            TierRefSpeed = tierRefSpeed;
+            LowUpper = lowUpper;
+            HighStart = highStart;
+        }
+    }
+
     public static class SumoImpactResolver
     {
         private const float DefaultMinImpactSpeed = 2.2f;
         private const float DefaultImpactActivationMinSpeed = 0.25f;
         private const float DefaultMaxImpactSpeed = 10f;
+        private const bool DefaultUseNormalizedTierThresholds = true;
+        private const float DefaultLowTierShare01 = 0.77f;
+        private const float DefaultMidTierShare01 = 0.15f;
+        private const float DefaultTierHysteresisShare01 = 0.02f;
+        private const float DefaultBackstepDeadZoneShare01 = 0.02f;
 
         public static SumoAttackerDecision ResolveAttacker(
             float firstApproachSpeed,
@@ -124,6 +151,115 @@ namespace Sumo
             }
 
             return new SumoAttackerDecision(SumoAttackerRole.Neutral, SumoTieResolvedBy.NeutralWithinEpsilon);
+        }
+
+        public static SumoImpactTier ResolveImpactTier(
+            SumoBallPhysicsConfig config,
+            float attackerTopSpeed,
+            float speed,
+            SumoImpactTier previousTier,
+            bool hasPreviousTier,
+            out SumoImpactTierThresholds thresholds)
+        {
+            thresholds = ComputeImpactTierThresholds(config, attackerTopSpeed);
+            float resolvedSpeed = SanitizeNonNegativeFinite(speed);
+            if (!hasPreviousTier || previousTier == SumoImpactTier.Unknown)
+            {
+                return ResolveTierWithoutHysteresis(resolvedSpeed, thresholds.LowUpper, thresholds.HighStart);
+            }
+
+            float hysteresisShare = config != null
+                ? config.TierHysteresisShare01
+                : DefaultTierHysteresisShare01;
+            float backstepDeadZoneShare = config != null
+                ? config.BackstepDeadZoneShare01
+                : DefaultBackstepDeadZoneShare01;
+
+            float hysteresis = thresholds.TierRefSpeed * Mathf.Max(0f, hysteresisShare);
+            float demotePadding = thresholds.TierRefSpeed * Mathf.Max(0f, backstepDeadZoneShare);
+            float demoteMargin = Mathf.Max(hysteresis, demotePadding);
+
+            switch (previousTier)
+            {
+                case SumoImpactTier.Low:
+                    if (resolvedSpeed < thresholds.LowUpper + hysteresis)
+                    {
+                        return SumoImpactTier.Low;
+                    }
+
+                    return resolvedSpeed < thresholds.HighStart
+                        ? SumoImpactTier.Mid
+                        : SumoImpactTier.High;
+
+                case SumoImpactTier.Mid:
+                    if (resolvedSpeed >= thresholds.HighStart + hysteresis)
+                    {
+                        return SumoImpactTier.High;
+                    }
+
+                    if (resolvedSpeed < thresholds.LowUpper - demoteMargin)
+                    {
+                        return SumoImpactTier.Low;
+                    }
+
+                    return SumoImpactTier.Mid;
+
+                case SumoImpactTier.High:
+                    if (resolvedSpeed >= thresholds.HighStart - demoteMargin)
+                    {
+                        return SumoImpactTier.High;
+                    }
+
+                    return resolvedSpeed < thresholds.LowUpper
+                        ? SumoImpactTier.Low
+                        : SumoImpactTier.Mid;
+
+                default:
+                    return ResolveTierWithoutHysteresis(resolvedSpeed, thresholds.LowUpper, thresholds.HighStart);
+            }
+        }
+
+        public static SumoImpactTierThresholds ComputeImpactTierThresholds(
+            SumoBallPhysicsConfig config,
+            float attackerTopSpeed)
+        {
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            maxImpactSpeed = Mathf.Max(0.01f, maxImpactSpeed);
+
+            float rawTopSpeed = SanitizeNonNegativeFinite(attackerTopSpeed);
+            if (rawTopSpeed <= 0.0001f)
+            {
+                rawTopSpeed = maxImpactSpeed;
+            }
+
+            float tierRefSpeed = Mathf.Max(0.01f, Mathf.Min(rawTopSpeed, maxImpactSpeed));
+
+            float lowShare = config != null ? config.LowTierShare01 : DefaultLowTierShare01;
+            float midShare = config != null ? config.MidTierShare01 : DefaultMidTierShare01;
+            bool useNormalizedThresholds = config != null
+                ? config.UseNormalizedTierThresholds
+                : DefaultUseNormalizedTierThresholds;
+
+            if (useNormalizedThresholds)
+            {
+                lowShare = Mathf.Clamp01(lowShare);
+                midShare = Mathf.Clamp(midShare, 0f, 1f - lowShare);
+            }
+            else
+            {
+                lowShare = Mathf.Max(0f, lowShare);
+                midShare = Mathf.Max(0f, midShare);
+                float total = lowShare + midShare;
+                if (total > 1f)
+                {
+                    lowShare /= total;
+                    midShare /= total;
+                }
+            }
+
+            float lowUpper = tierRefSpeed * lowShare;
+            float highStart = tierRefSpeed * Mathf.Clamp01(lowShare + midShare);
+            return new SumoImpactTierThresholds(tierRefSpeed, lowUpper, highStart);
         }
 
         public static float EvaluateSpeedCurve(
@@ -340,6 +476,34 @@ namespace Sumo
                 energyDecay,
                 ramForceScale,
                 shouldStop);
+        }
+
+        private static SumoImpactTier ResolveTierWithoutHysteresis(
+            float speed,
+            float lowUpper,
+            float highStart)
+        {
+            if (speed < lowUpper)
+            {
+                return SumoImpactTier.Low;
+            }
+
+            if (speed < highStart)
+            {
+                return SumoImpactTier.Mid;
+            }
+
+            return SumoImpactTier.High;
+        }
+
+        private static float SanitizeNonNegativeFinite(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+            {
+                return 0f;
+            }
+
+            return value;
         }
 
         private static float ComputeInitialRamEnergy(
