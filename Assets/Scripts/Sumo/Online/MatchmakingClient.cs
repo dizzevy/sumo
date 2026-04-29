@@ -96,6 +96,11 @@ namespace Sumo.Online
             _ = CancelSearchAsync();
         }
 
+        public Task ReturnToMainMenuAsync()
+        {
+            return CancelSearchAsync();
+        }
+
         private async Task RunFindGameFlowAsync()
         {
             _searchCts = new CancellationTokenSource();
@@ -219,13 +224,7 @@ namespace Sumo.Online
 
         private async Task CancelSearchAsync()
         {
-            if (_searchCts == null)
-            {
-                SetState(MatchmakingClientState.Idle, "Idle");
-                return;
-            }
-
-            _searchCts.Cancel();
+            _searchCts?.Cancel();
 
             if (_service != null && _activeTicket != null)
             {

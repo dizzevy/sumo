@@ -66,6 +66,7 @@ namespace Sumo.Gameplay
         private readonly HashSet<PlayerRef> _missingPlayerStateLogged = new HashSet<PlayerRef>();
         private readonly List<PlayerRef> _activePlayersScratch = new List<PlayerRef>(16);
         private readonly List<PlayerRef> _roundRoster = new List<PlayerRef>(16);
+        private readonly List<PlayerRoundState> _roundNpcStates = new List<PlayerRoundState>(16);
         private readonly List<PlayerRef> _removeScratch = new List<PlayerRef>(16);
         private readonly List<NetworkObject> _spawnedNpcs = new List<NetworkObject>(16);
 
@@ -85,13 +86,12 @@ namespace Sumo.Gameplay
                 return false;
             }
 
-            PlayerRef player = ResolvePlayerRef(state);
-            if (player == PlayerRef.None || !_roundRoster.Contains(player))
+            if (!TryResolveRoundParticipantId(state, out int participantRawEncoded))
             {
                 return false;
             }
 
-            if (!TryEliminatePlayerState(state, player))
+            if (!TryEliminatePlayerState(state, participantRawEncoded))
             {
                 return false;
             }
@@ -160,13 +160,13 @@ namespace Sumo.Gameplay
                                     && State != MatchState.RoundFinished
                                     && State != MatchState.ResetRound;
 
-            if (activeRoundState && _roundRoster.Count > 0 && AlivePlayersInRound <= 1)
+            if (activeRoundState && CountRoundParticipants() > 0 && AlivePlayersInRound <= 1)
             {
                 EnterRoundFinished();
                 return;
             }
 
-            if (activeRoundState && _roundRoster.Count == 0)
+            if (activeRoundState && CountRoundParticipants() == 0)
             {
                 EnterWaitingForPlayers();
                 return;
@@ -411,7 +411,23 @@ namespace Sumo.Gameplay
                     continue;
                 }
 
-                TryEliminatePlayerState(state, player);
+                TryEliminatePlayerState(state, player.RawEncoded);
+            }
+
+            for (int i = 0; i < _roundNpcStates.Count; i++)
+            {
+                PlayerRoundState state = _roundNpcStates[i];
+                if (state == null || !state.IsAliveInRound)
+                {
+                    continue;
+                }
+
+                if (safeZoneManager.IsInsideCurrentZone(state.ZoneCheckPosition))
+                {
+                    continue;
+                }
+
+                TryEliminatePlayerState(state, EncodeNpcParticipantRawEncoded(i));
             }
 
             AlivePlayersInRound = CountAlivePlayersInRoster();
@@ -541,6 +557,15 @@ namespace Sumo.Gameplay
                 }
             }
 
+            for (int i = _roundNpcStates.Count - 1; i >= 0; i--)
+            {
+                PlayerRoundState npcState = _roundNpcStates[i];
+                if (npcState == null || npcState.Object == null || !npcState.Object.IsInSimulation)
+                {
+                    _roundNpcStates.RemoveAt(i);
+                }
+            }
+
             for (int i = 0; i < _activePlayersScratch.Count; i++)
             {
                 PlayerRef player = _activePlayersScratch[i];
@@ -632,7 +657,21 @@ namespace Sumo.Gameplay
                 }
             }
 
+            for (int i = 0; i < _roundNpcStates.Count; i++)
+            {
+                PlayerRoundState state = _roundNpcStates[i];
+                if (state != null && state.IsAliveInRound)
+                {
+                    alive++;
+                }
+            }
+
             return alive;
+        }
+
+        private int CountRoundParticipants()
+        {
+            return _roundRoster.Count + _roundNpcStates.Count;
         }
 
         private void SpawnRuntimeNpcsForRound(int humanPlayerCount)
@@ -666,8 +705,14 @@ namespace Sumo.Gameplay
                     continue;
                 }
 
-                ConfigureRuntimeNpc(npcObject, i);
-                _spawnedNpcs.Add(npcObject);
+                if (ConfigureRuntimeNpc(npcObject, i, spawnPos, spawnRot))
+                {
+                    _spawnedNpcs.Add(npcObject);
+                }
+                else
+                {
+                    Runner.Despawn(npcObject);
+                }
             }
 
             Debug.Log($"MatchRoundManager: spawned {_spawnedNpcs.Count} runtime NPCs for round {RoundIndex}.");
@@ -686,11 +731,11 @@ namespace Sumo.Gameplay
             return UnityEngine.Random.Range(minNpcs, freeSlots + 1);
         }
 
-        private void ConfigureRuntimeNpc(NetworkObject npcObject, int localIndex)
+        private bool ConfigureRuntimeNpc(NetworkObject npcObject, int localIndex, Vector3 spawnPos, Quaternion spawnRot)
         {
             if (npcObject == null)
             {
-                return;
+                return false;
             }
 
             npcObject.name = $"RuntimeNpc_R{RoundIndex}_{localIndex + 1}";
@@ -705,12 +750,25 @@ namespace Sumo.Gameplay
             {
                 Debug.LogWarning($"MatchRoundManager: spawned NPC prefab '{npcObject.name}' is missing SumoNpcBallDriver.");
             }
+
+            PlayerRoundState npcState = npcObject.GetComponent<PlayerRoundState>();
+            if (npcState == null)
+            {
+                Debug.LogError($"MatchRoundManager: spawned NPC prefab '{npcObject.name}' is missing PlayerRoundState.");
+                return false;
+            }
+
+            npcState.ServerForceClientReady(true);
+            npcState.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot);
+            _roundNpcStates.Add(npcState);
+            return true;
         }
 
         private void DespawnRuntimeNpcs()
         {
             if (_spawnedNpcs.Count == 0)
             {
+                _roundNpcStates.Clear();
                 return;
             }
 
@@ -724,6 +782,7 @@ namespace Sumo.Gameplay
             }
 
             _spawnedNpcs.Clear();
+            _roundNpcStates.Clear();
         }
 
         private void ToggleRuntimeNpcsMoving()
@@ -765,7 +824,7 @@ namespace Sumo.Gameplay
             rotation = Quaternion.identity;
         }
 
-        private bool TryEliminatePlayerState(PlayerRoundState state, PlayerRef player)
+        private bool TryEliminatePlayerState(PlayerRoundState state, int participantRawEncoded)
         {
             if (state == null || !state.IsAliveInRound)
             {
@@ -788,9 +847,9 @@ namespace Sumo.Gameplay
             state.ServerEliminateToSpectator(_eliminationOrderCounter, spectatorPos, spectatorRot);
 
             AlivePlayersInRound = CountAlivePlayersInRoster();
-            if (player != PlayerRef.None)
+            if (participantRawEncoded != PlayerRef.None.RawEncoded)
             {
-                RPC_NotifyPlayerEliminated(player.RawEncoded, AlivePlayersInRound);
+                RPC_NotifyPlayerEliminated(participantRawEncoded, AlivePlayersInRound);
             }
 
             return true;
@@ -798,7 +857,7 @@ namespace Sumo.Gameplay
 
         private int ResolveWinnerRawEncoded()
         {
-            PlayerRef winner = PlayerRef.None;
+            int winnerRawEncoded = PlayerRef.None.RawEncoded;
             int aliveCount = 0;
 
             for (int i = 0; i < _roundRoster.Count; i++)
@@ -814,7 +873,7 @@ namespace Sumo.Gameplay
                     continue;
                 }
 
-                winner = player;
+                winnerRawEncoded = player.RawEncoded;
                 aliveCount++;
                 if (aliveCount > 1)
                 {
@@ -822,7 +881,53 @@ namespace Sumo.Gameplay
                 }
             }
 
-            return aliveCount == 1 ? winner.RawEncoded : PlayerRef.None.RawEncoded;
+            for (int i = 0; i < _roundNpcStates.Count; i++)
+            {
+                PlayerRoundState state = _roundNpcStates[i];
+                if (state == null || !state.IsAliveInRound)
+                {
+                    continue;
+                }
+
+                winnerRawEncoded = EncodeNpcParticipantRawEncoded(i);
+                aliveCount++;
+                if (aliveCount > 1)
+                {
+                    return PlayerRef.None.RawEncoded;
+                }
+            }
+
+            return aliveCount == 1 ? winnerRawEncoded : PlayerRef.None.RawEncoded;
+        }
+
+        private bool TryResolveRoundParticipantId(PlayerRoundState state, out int participantRawEncoded)
+        {
+            participantRawEncoded = PlayerRef.None.RawEncoded;
+            if (state == null)
+            {
+                return false;
+            }
+
+            PlayerRef player = ResolvePlayerRef(state);
+            if (player != PlayerRef.None && _roundRoster.Contains(player))
+            {
+                participantRawEncoded = player.RawEncoded;
+                return true;
+            }
+
+            int npcIndex = _roundNpcStates.IndexOf(state);
+            if (npcIndex >= 0)
+            {
+                participantRawEncoded = EncodeNpcParticipantRawEncoded(npcIndex);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int EncodeNpcParticipantRawEncoded(int npcIndex)
+        {
+            return -(Mathf.Max(0, npcIndex) + 1);
         }
 
         private static PlayerRef ResolvePlayerRef(PlayerRoundState state)

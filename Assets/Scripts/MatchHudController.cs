@@ -240,6 +240,11 @@ namespace Sumo.Gameplay
 
         private string FormatPlayerLabel(int rawEncoded)
         {
+            if (rawEncoded < 0)
+            {
+                return $"Bot {Mathf.Abs(rawEncoded)}";
+            }
+
             if (rawEncoded == PlayerRef.None.RawEncoded)
             {
                 return "Player";

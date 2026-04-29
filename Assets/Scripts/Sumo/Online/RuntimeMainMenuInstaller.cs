@@ -129,16 +129,32 @@ namespace Sumo.Online
             Button settingsBackButton = CreateButton("SettingsBackButton", settingsPanel.transform, "Back", font);
             SetButtonHeight(settingsBackButton, 56f);
 
+            GameObject inGamePanel = CreatePanel("InGamePanel", overlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.08f, 0.1f, 0.15f, 0.95f));
+            SetSize(inGamePanel, new Vector2(560f, 360f));
+            AddVerticalLayout(inGamePanel, 16, new RectOffset(36, 36, 36, 36), TextAnchor.MiddleCenter);
+
+            CreateLabel("InGameTitle", inGamePanel.transform, "Пауза", font, 46, TextAnchor.MiddleCenter, Color.white);
+
+            Button resumeGameButton = CreateButton("ResumeGameButton", inGamePanel.transform, "Вернуться в игру", font);
+            SetButtonHeight(resumeGameButton, 62f);
+
+            Button inGameSettingsButton = CreateButton("InGameSettingsButton", inGamePanel.transform, "Настройки", font);
+            SetButtonHeight(inGameSettingsButton, 58f);
+
+            Button mainMenuButton = CreateButton("MainMenuButton", inGamePanel.transform, "Главное меню", font);
+            SetButtonHeight(mainMenuButton, 58f);
+
             MainMenuController mainMenuController = gameObject.AddComponent<MainMenuController>();
             ClientFusionConnector connector = gameObject.AddComponent<ClientFusionConnector>();
             MatchmakingClient matchmakingClient = gameObject.AddComponent<MatchmakingClient>();
             MultiplayerMenuController multiplayerMenuController = gameObject.AddComponent<MultiplayerMenuController>();
             SettingsMenuController settingsMenuController = gameObject.AddComponent<SettingsMenuController>();
+            InGameMenuController inGameMenuController = gameObject.AddComponent<InGameMenuController>();
 
             BootstrapConfig bootstrapConfig = Resources.Load<BootstrapConfig>("BootstrapConfig");
 
             matchmakingClient.Configure(bootstrapConfig, connector, false);
-            mainMenuController.Configure(mainPanel, multiplayerPanel, settingsPanel);
+            mainMenuController.Configure(mainPanel, multiplayerPanel, settingsPanel, inGamePanel);
             multiplayerMenuController.Configure(
                 matchmakingClient,
                 mainMenuController,
@@ -152,6 +168,14 @@ namespace Sumo.Online
                 toggleDisplayModeButton,
                 settingsBackButton,
                 displayModeStatusText);
+            inGameMenuController.Configure(
+                mainMenuController,
+                matchmakingClient,
+                connector,
+                canvas,
+                resumeGameButton,
+                inGameSettingsButton,
+                mainMenuButton);
 
             multiplayerButton.onClick.AddListener(mainMenuController.OpenMultiplayer);
             settingsButton.onClick.AddListener(mainMenuController.OpenSettings);
@@ -312,6 +336,329 @@ namespace Sumo.Online
     }
 
     [DisallowMultipleComponent]
+    public sealed class InGameMenuController : MonoBehaviour
+    {
+        [SerializeField] private MainMenuController mainMenuController;
+        [SerializeField] private MatchmakingClient matchmakingClient;
+        [SerializeField] private ClientFusionConnector fusionConnector;
+        [SerializeField] private Canvas menuCanvas;
+        [SerializeField] private Button resumeButton;
+        [SerializeField] private Button settingsButton;
+        [SerializeField] private Button mainMenuButton;
+
+        private bool _listenersBound;
+        private bool _stateSubscribed;
+        private bool _isConnected;
+        private bool _returningToMainMenu;
+
+        public void Configure(
+            MainMenuController mainMenuControllerReference,
+            MatchmakingClient matchmakingClientReference,
+            ClientFusionConnector fusionConnectorReference,
+            Canvas menuCanvasReference,
+            Button resumeButtonReference,
+            Button settingsButtonReference,
+            Button mainMenuButtonReference)
+        {
+            UnbindButtonListeners();
+
+            mainMenuController = mainMenuControllerReference;
+            matchmakingClient = matchmakingClientReference;
+            fusionConnector = fusionConnectorReference;
+            menuCanvas = menuCanvasReference;
+            resumeButton = resumeButtonReference;
+            settingsButton = settingsButtonReference;
+            mainMenuButton = mainMenuButtonReference;
+
+            BindButtonListeners();
+
+            if (isActiveAndEnabled)
+            {
+                SubscribeState();
+                if (matchmakingClient != null)
+                {
+                    OnMatchmakingStateChanged(matchmakingClient.CurrentState, matchmakingClient.CurrentStateText);
+                }
+            }
+        }
+
+        private void OnEnable()
+        {
+            SubscribeState();
+        }
+
+        private void OnDisable()
+        {
+            UnsubscribeState();
+        }
+
+        private void OnDestroy()
+        {
+            UnbindButtonListeners();
+        }
+
+        private void Update()
+        {
+            if (!_isConnected || _returningToMainMenu)
+            {
+                return;
+            }
+
+            if (!Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.Escape))
+            {
+                return;
+            }
+
+            if (mainMenuController != null
+                && (mainMenuController.IsInGameMenuOpen || mainMenuController.IsSettingsOpenFromGame))
+            {
+                ResumeGame();
+            }
+            else
+            {
+                OpenInGameMenu();
+            }
+        }
+
+        private void OnResumePressed()
+        {
+            ResumeGame();
+        }
+
+        private void OnSettingsPressed()
+        {
+            if (!_isConnected || mainMenuController == null)
+            {
+                return;
+            }
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = true;
+            }
+
+            SetGameplayCursorLock(false);
+            mainMenuController.OpenSettingsFromInGame();
+        }
+
+        private async void OnMainMenuPressed()
+        {
+            if (_returningToMainMenu)
+            {
+                return;
+            }
+
+            _returningToMainMenu = true;
+            SetGameplayCursorLock(false);
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = true;
+            }
+
+            if (mainMenuController != null)
+            {
+                mainMenuController.BackToMainMenu();
+            }
+
+            try
+            {
+                if (matchmakingClient != null)
+                {
+                    await matchmakingClient.ReturnToMainMenuAsync();
+                }
+                else if (fusionConnector != null)
+                {
+                    await fusionConnector.DisconnectAsync();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+            finally
+            {
+                _returningToMainMenu = false;
+                _isConnected = false;
+
+                if (menuCanvas != null)
+                {
+                    menuCanvas.enabled = true;
+                }
+
+                if (mainMenuController != null)
+                {
+                    mainMenuController.BackToMainMenu();
+                }
+            }
+        }
+
+        private void OpenInGameMenu()
+        {
+            if (!_isConnected)
+            {
+                return;
+            }
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = true;
+            }
+
+            SetGameplayCursorLock(false);
+
+            if (mainMenuController != null)
+            {
+                mainMenuController.OpenInGameMenu();
+            }
+        }
+
+        private void ResumeGame()
+        {
+            if (!_isConnected)
+            {
+                return;
+            }
+
+            if (mainMenuController != null)
+            {
+                mainMenuController.HideAllPanels();
+            }
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = false;
+            }
+
+            SetGameplayCursorLock(true);
+        }
+
+        private void HideConnectedMenu()
+        {
+            if (mainMenuController != null)
+            {
+                mainMenuController.HideAllPanels();
+            }
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = false;
+            }
+        }
+
+        private void OnMatchmakingStateChanged(MatchmakingClientState state, string status)
+        {
+            _isConnected = state == MatchmakingClientState.Connected;
+
+            if (_isConnected)
+            {
+                if (!_returningToMainMenu)
+                {
+                    HideConnectedMenu();
+                }
+
+                return;
+            }
+
+            SetGameplayCursorLock(false);
+
+            if (menuCanvas != null)
+            {
+                menuCanvas.enabled = true;
+            }
+
+            if (mainMenuController != null
+                && (mainMenuController.IsInGameMenuOpen || mainMenuController.IsSettingsOpenFromGame))
+            {
+                mainMenuController.BackToMainMenu();
+            }
+        }
+
+        private void BindButtonListeners()
+        {
+            if (_listenersBound)
+            {
+                return;
+            }
+
+            if (resumeButton != null)
+            {
+                resumeButton.onClick.AddListener(OnResumePressed);
+            }
+
+            if (settingsButton != null)
+            {
+                settingsButton.onClick.AddListener(OnSettingsPressed);
+            }
+
+            if (mainMenuButton != null)
+            {
+                mainMenuButton.onClick.AddListener(OnMainMenuPressed);
+            }
+
+            _listenersBound = true;
+        }
+
+        private void UnbindButtonListeners()
+        {
+            if (!_listenersBound)
+            {
+                return;
+            }
+
+            if (resumeButton != null)
+            {
+                resumeButton.onClick.RemoveListener(OnResumePressed);
+            }
+
+            if (settingsButton != null)
+            {
+                settingsButton.onClick.RemoveListener(OnSettingsPressed);
+            }
+
+            if (mainMenuButton != null)
+            {
+                mainMenuButton.onClick.RemoveListener(OnMainMenuPressed);
+            }
+
+            _listenersBound = false;
+        }
+
+        private void SubscribeState()
+        {
+            if (_stateSubscribed || matchmakingClient == null)
+            {
+                return;
+            }
+
+            matchmakingClient.StateChanged += OnMatchmakingStateChanged;
+            _stateSubscribed = true;
+            OnMatchmakingStateChanged(matchmakingClient.CurrentState, matchmakingClient.CurrentStateText);
+        }
+
+        private void UnsubscribeState()
+        {
+            if (!_stateSubscribed)
+            {
+                return;
+            }
+
+            if (matchmakingClient != null)
+            {
+                matchmakingClient.StateChanged -= OnMatchmakingStateChanged;
+            }
+
+            _stateSubscribed = false;
+        }
+
+        private static void SetGameplayCursorLock(bool locked)
+        {
+            Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
+            Cursor.visible = !locked;
+        }
+    }
+
+    [DisallowMultipleComponent]
     public sealed class SettingsMenuController : MonoBehaviour
     {
         [SerializeField] private MainMenuController mainMenuController;
@@ -366,7 +713,7 @@ namespace Sumo.Online
         {
             if (mainMenuController != null)
             {
-                mainMenuController.BackToMainMenu();
+                mainMenuController.BackFromSettings();
             }
         }
 
