@@ -54,9 +54,16 @@ namespace Sumo
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
         [SerializeField] private float dashImpactMultiplier = 1.6f;
-        [SerializeField] private float impactBurstDuration = 0.11f;
-        [SerializeField] private float firstImpactBurstFrontload = 0.85f;
-        [SerializeField] private float firstImpactKickImpulseShare = 0.97f;
+        [SerializeField] private float impactBurstDuration = 0.18f;
+        [SerializeField] private float firstImpactBurstFrontload = 0.42f;
+        [SerializeField] private float firstImpactKickImpulseShare = 0.24f;
+
+        [Header("Hybrid Contact Response")]
+        [SerializeField] private float arcadeBurstMinSpeed01 = 0.5f;
+        [SerializeField] private float arcadeBurstDashMinSpeed01 = 0.25f;
+        [SerializeField] private float softShoveMaxDeltaVPerTick = 0.12f;
+        [SerializeField] private float softShoveEntryMaxDeltaVPerTick = 0.12f;
+        [SerializeField] private float arcadeBurstMaxDeltaVPerTick = 0.38f;
 
         [Header("Impact Tiering")]
         [SerializeField] private bool useNormalizedTierThresholds = true;
@@ -64,6 +71,9 @@ namespace Sumo
         [SerializeField] private float midTierShare01 = 0.15f;
         [SerializeField] private float tierHysteresisShare01 = 0.02f;
         [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
+        [SerializeField] private float lowTierShoveMultiplier = 2f;
+        [SerializeField] private float midTierShoveMultiplier = 2f;
+        [SerializeField] private float highTierShoveMultiplier = 3f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
@@ -119,10 +129,10 @@ namespace Sumo
 
         [Header("Victim Local Catchup")]
         [SerializeField] private float victimLocalPushPrediction = 1.02f;
-        [SerializeField] private float victimLocalPushMaxDeltaVPerTick = 0.22f;
+        [SerializeField] private float victimLocalPushMaxDeltaVPerTick = 0.16f;
         [SerializeField] private float victimLocalPushBrakeDeltaVPerTick = 0.12f;
-        [SerializeField] private float victimLocalImpactCatchupAcceleration = 72f;
-        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.32f;
+        [SerializeField] private float victimLocalImpactCatchupAcceleration = 28f;
+        [SerializeField] private float victimLocalImpactMaxDeltaVPerTick = 0.10f;
         [SerializeField] private float victimLocalRamCatchupAcceleration = 30f;
 
         [Header("Victim Anticipation")]
@@ -133,7 +143,7 @@ namespace Sumo
         [SerializeField] private int victimAnticipationContactLossTicks = 2;
         [SerializeField] private int victimAnticipationHandoffTicks = 3;
         [SerializeField] private float victimAnticipationTargetSpeedScale = 0.98f;
-        [SerializeField] private float victimAnticipationImpactMaxDeltaVPerTick = 0.28f;
+        [SerializeField] private float victimAnticipationImpactMaxDeltaVPerTick = 0.08f;
         [SerializeField] private float victimAnticipationRamMaxDeltaVPerTick = 0.10f;
 
         [Header("Anti-Bulldoze")]
@@ -175,11 +185,19 @@ namespace Sumo
         public float ImpactBurstDuration => impactBurstDuration;
         public float FirstImpactBurstFrontload => firstImpactBurstFrontload;
         public float FirstImpactKickImpulseShare => firstImpactKickImpulseShare;
+        public float ArcadeBurstMinSpeed01 => arcadeBurstMinSpeed01;
+        public float ArcadeBurstDashMinSpeed01 => arcadeBurstDashMinSpeed01;
+        public float SoftShoveMaxDeltaVPerTick => softShoveMaxDeltaVPerTick;
+        public float SoftShoveEntryMaxDeltaVPerTick => softShoveEntryMaxDeltaVPerTick;
+        public float ArcadeBurstMaxDeltaVPerTick => arcadeBurstMaxDeltaVPerTick;
         public bool UseNormalizedTierThresholds => useNormalizedTierThresholds;
         public float LowTierShare01 => lowTierShare01;
         public float MidTierShare01 => midTierShare01;
         public float TierHysteresisShare01 => tierHysteresisShare01;
         public float BackstepDeadZoneShare01 => backstepDeadZoneShare01;
+        public float LowTierShoveMultiplier => lowTierShoveMultiplier;
+        public float MidTierShoveMultiplier => midTierShoveMultiplier;
+        public float HighTierShoveMultiplier => highTierShoveMultiplier;
         public float AttackerTieSpeedEpsilon => attackerTieSpeedEpsilon;
         public bool ResolveTieByLowerKey => resolveTieByLowerKey;
         public int ContactBreakGraceTicks => contactBreakGraceTicks;
@@ -311,13 +329,21 @@ namespace Sumo
             impactAttackerRecoilScale = Mathf.Clamp01(impactAttackerRecoilScale);
             impactVerticalLift = Mathf.Max(0f, impactVerticalLift);
             dashImpactMultiplier = Mathf.Max(1f, dashImpactMultiplier);
-            impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.14f);
+            impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.24f);
             firstImpactBurstFrontload = Mathf.Clamp01(firstImpactBurstFrontload);
             firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
+            arcadeBurstMinSpeed01 = Mathf.Clamp01(arcadeBurstMinSpeed01);
+            arcadeBurstDashMinSpeed01 = Mathf.Clamp01(arcadeBurstDashMinSpeed01);
+            softShoveMaxDeltaVPerTick = Mathf.Clamp(softShoveMaxDeltaVPerTick, 0.005f, 0.2f);
+            softShoveEntryMaxDeltaVPerTick = Mathf.Clamp(softShoveEntryMaxDeltaVPerTick, 0.005f, 0.3f);
+            arcadeBurstMaxDeltaVPerTick = Mathf.Clamp(arcadeBurstMaxDeltaVPerTick, softShoveMaxDeltaVPerTick, 0.4f);
             lowTierShare01 = Mathf.Clamp01(lowTierShare01);
             midTierShare01 = Mathf.Clamp(midTierShare01, 0f, 1f - lowTierShare01);
             tierHysteresisShare01 = Mathf.Clamp(tierHysteresisShare01, 0f, 0.25f);
             backstepDeadZoneShare01 = Mathf.Clamp(backstepDeadZoneShare01, 0f, 0.25f);
+            lowTierShoveMultiplier = Mathf.Clamp(lowTierShoveMultiplier, 0.25f, 5f);
+            midTierShoveMultiplier = Mathf.Clamp(midTierShoveMultiplier, 0.25f, 5f);
+            highTierShoveMultiplier = Mathf.Clamp(highTierShoveMultiplier, 0.25f, 5f);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);

@@ -112,8 +112,9 @@ GameObject:
   - component: {fileID: 8956079541103320987}
   - component: {fileID: 28822364788379151}
   - component: {fileID: 254724138945510259}
+  - component: {fileID: 5718680497664062734}
   m_Layer: 0
-  m_Name: Player
+  m_Name: Player_npc
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -168,7 +169,7 @@ MonoBehaviour:
   m_Script: {fileID: -1552182283, guid: e725a070cec140c4caffb81624c8c787, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Fusion.Runtime.dll::Fusion.NetworkObject
-  SortKey: 67192379
+  SortKey: 706617203
   ObjectInterest: 0
   Flags: 262145
   NestedObjects: []
@@ -244,6 +245,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoBallController
   accelerationConfig: {fileID: 7312468195501234567}
+  movementSpeedMultiplier: 1.5
   airControlMultiplier: 0.12
   airMaxSpeedMultiplier: 1
   groundCheckDistance: 0.2
@@ -439,6 +441,7 @@ MonoBehaviour:
   enableClientPredictedImpact: 1
   enableClientPredictedRam: 1
   applyPredictedForcesToRemoteProxies: 1
+  enableVictimLocalCatchup: 1
   logImpacts: 0
   logStateMachine: 0
 --- !u!114 &-451421529677693719
@@ -503,10 +506,16 @@ MonoBehaviour:
   body: {fileID: -4605785503722955420}
   gameplayColliders:
   - {fileID: 4093002765778370635}
+  gameplayRenderers:
+  - {fileID: 8427303300733860745}
   enableDeathVfx: 1
   deathVfxShardCount: 24
   deathVfxLifetime: 2.2
   deathVfxSpawnYOffset: 0.1
+  deathVfxPrimaryColor: {r: 1, g: 0.18, b: 0.08, a: 1}
+  deathVfxHighlightColor: {r: 1, g: 0.62, b: 0.12, a: 1}
+  deathVfxIntensity: 1.55
+  deathToSpectatorDelay: -1
   _IsClientReady:
     _value: 0
   _IsAlive:
@@ -544,3 +553,54 @@ MonoBehaviour:
   minPitch: -65
   maxPitch: 75
   targetRefreshInterval: 0.35
+--- !u!114 &5718680497664062734
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3715937344977919566}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68779da2a0264ed8ad332726cb18fd04, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Sumo.SumoNpcBallDriver
+  startMovingOnEnable: 1
+  stopStartBind: 116
+  hardBrakeWhenStopped: 1
+  usePlayerControllerWhenAvailable: 1
+  directionMode: 0
+  worldDirection: {x: 0, y: 0, z: 1}
+  localDirection: {x: 0, y: 0, z: 1}
+  directionTarget: {fileID: 0}
+  targetSpeed: 12
+  inputStrength: 1
+  hardBrakeWithoutMoveInput: 0
+  moveTowardZone: 1
+  zoneTransform: {fileID: 0}
+  zoneCollider: {fileID: 0}
+  zoneCenterOffset: {x: 0, y: 0, z: 0}
+  zoneStopRadius: 0.75
+  zoneResumeRadius: 1.1
+  brakeInsideZone: 1
+  driveStandaloneRigidbody: 1
+  accelerationConfig: {fileID: 0}
+  physicsConfig: {fileID: 0}
+  movementSpeedMultiplier: 1.5
+  movementForceMode: 5
+  groundCheckDistance: 0.2
+  minGroundNormalDot: 0.55
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  airControlMultiplier: 0.12
+  airMaxSpeedMultiplier: 1
+  fallGravityMultiplier: 1.15
+  applyPhysicsConfigOnAwake: 1
+  rotationMode: 0
+  faceMoveDirectionTurnSpeed: 720
+  angularVelocityDegreesPerSecond: {x: 0, y: 0, z: 0}
+  angularVelocitySpace: 1
+  drawGizmos: 1
+  directionGizmoColor: {r: 0.2, g: 0.85, b: 1, a: 1}
+  zoneGizmoColor: {r: 1, g: 0.85, b: 0.1, a: 1}

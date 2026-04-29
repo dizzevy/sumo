@@ -8,7 +8,7 @@ namespace Sumo.Online
         public const int TargetMaxPlayers = 10;
 
         [Header("Match Defaults")]
-        [SerializeField] private string defaultSceneName = "Location1";
+        [SerializeField] private string defaultSceneName = "location_test";
         [SerializeField] private int defaultMaxPlayers = TargetMaxPlayers;
         [SerializeField] private int minimumPlayersToStart = 2;
         [SerializeField] private ushort defaultServerPort = 27015;

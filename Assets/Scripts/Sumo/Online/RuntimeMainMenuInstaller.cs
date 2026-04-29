@@ -319,6 +319,9 @@ namespace Sumo.Online
         [SerializeField] private Button backButton;
         [SerializeField] private Text displayModeStatusText;
 
+        private const int PreferredWindowedWidth = 1280;
+        private const int PreferredWindowedHeight = 720;
+
         private bool _listenersBound;
 
         public void Configure(
@@ -369,15 +372,17 @@ namespace Sumo.Online
 
         private void ApplyDisplayMode(bool useFullscreen)
         {
+            ResetRenderScale();
+
             if (useFullscreen)
             {
-                Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
-                Screen.fullScreen = true;
+                ResolveNativeResolution(out int width, out int height);
+                Screen.SetResolution(width, height, FullScreenMode.FullScreenWindow);
             }
             else
             {
-                Screen.fullScreenMode = FullScreenMode.Windowed;
-                Screen.fullScreen = false;
+                ResolveWindowedResolution(out int width, out int height);
+                Screen.SetResolution(width, height, FullScreenMode.Windowed);
             }
 
             RefreshDisplayModeUi();
@@ -390,10 +395,55 @@ namespace Sumo.Online
 
             if (displayModeStatusText != null)
             {
-                displayModeStatusText.text = $"Current Mode: {currentModeLabel}";
+                displayModeStatusText.text = $"Current Mode: {currentModeLabel} {Screen.width}x{Screen.height}";
             }
 
             SetButtonCaption(toggleDisplayModeButton, isWindowed ? "Switch To Fullscreen" : "Switch To Windowed");
+        }
+
+        private static void ResolveNativeResolution(out int width, out int height)
+        {
+            Resolution current = Screen.currentResolution;
+            width = current.width;
+            height = current.height;
+
+            if (width <= 0 || height <= 0)
+            {
+                width = Display.main != null ? Display.main.systemWidth : 1920;
+                height = Display.main != null ? Display.main.systemHeight : 1080;
+            }
+
+            width = Mathf.Max(640, width);
+            height = Mathf.Max(360, height);
+        }
+
+        private static void ResolveWindowedResolution(out int width, out int height)
+        {
+            ResolveNativeResolution(out int nativeWidth, out int nativeHeight);
+
+            int maxWidth = Mathf.Max(640, Mathf.RoundToInt(nativeWidth * 0.8f));
+            int maxHeight = Mathf.Max(360, Mathf.RoundToInt(nativeHeight * 0.8f));
+
+            width = Mathf.Min(PreferredWindowedWidth, maxWidth);
+            height = Mathf.Min(PreferredWindowedHeight, maxHeight);
+
+            float targetAspect = PreferredWindowedWidth / (float)PreferredWindowedHeight;
+            if (width / (float)Mathf.Max(1, height) > targetAspect)
+            {
+                width = Mathf.RoundToInt(height * targetAspect);
+            }
+            else
+            {
+                height = Mathf.RoundToInt(width / targetAspect);
+            }
+
+            width = Mathf.Max(640, width);
+            height = Mathf.Max(360, height);
+        }
+
+        private static void ResetRenderScale()
+        {
+            ScalableBufferManager.ResizeBuffers(1f, 1f);
         }
 
         private void BindButtonListeners()

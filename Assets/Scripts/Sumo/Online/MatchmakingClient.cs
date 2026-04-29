@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Fusion;
 using UnityEngine;
 
 namespace Sumo.Online
@@ -29,6 +30,8 @@ namespace Sumo.Online
 
         [Header("Runtime")]
         [SerializeField] private float statusPollIntervalSeconds = 0.2f;
+        [SerializeField] private float connectRetryWindowSeconds = 10.0f;
+        [SerializeField] private float connectRetryDelaySeconds = 0.5f;
 
         private const string PlayerIdKey = "sumo.player.id";
 
@@ -127,7 +130,7 @@ namespace Sumo.Online
                     throw new InvalidOperationException("ClientFusionConnector reference is missing.");
                 }
 
-                var result = await fusionConnector.ConnectAsync(connection, token);
+                StartGameResult result = await ConnectWithRetryAsync(connection, token);
 
                 if (result.Ok)
                 {
@@ -135,9 +138,7 @@ namespace Sumo.Online
                     return;
                 }
 
-                string error = string.IsNullOrWhiteSpace(result.ErrorMessage)
-                    ? result.ShutdownReason.ToString()
-                    : result.ErrorMessage;
+                string error = BuildConnectionError(result);
 
                 SetState(MatchmakingClientState.Failed, $"Failed: {error}");
                 await fusionConnector.DisconnectAsync();
@@ -193,6 +194,29 @@ namespace Sumo.Online
             return await waitTask;
         }
 
+        private async Task<StartGameResult> ConnectWithRetryAsync(ServerConnectionInfo connection, CancellationToken token)
+        {
+            float retryWindow = Mathf.Max(0f, connectRetryWindowSeconds);
+            int retryDelayMs = Mathf.Max(100, Mathf.RoundToInt(connectRetryDelaySeconds * 1000f));
+            DateTime retryDeadlineUtc = DateTime.UtcNow.AddSeconds(retryWindow);
+
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+
+                StartGameResult result = await fusionConnector.ConnectAsync(connection, token);
+                if (result.Ok || !ShouldRetryConnection(result) || DateTime.UtcNow >= retryDeadlineUtc)
+                {
+                    return result;
+                }
+
+                SetState(MatchmakingClientState.Connecting, "Connecting...");
+
+                int remainingMs = Mathf.Max(0, Mathf.RoundToInt((float)(retryDeadlineUtc - DateTime.UtcNow).TotalMilliseconds));
+                await Task.Delay(Mathf.Min(retryDelayMs, remainingMs), token);
+            }
+        }
+
         private async Task CancelSearchAsync()
         {
             if (_searchCts == null)
@@ -245,7 +269,7 @@ namespace Sumo.Online
                     SessionName = bootstrapConfig != null ? bootstrapConfig.MockSessionName : "sumo_match_001",
                     MatchId = bootstrapConfig != null ? bootstrapConfig.MockMatchId : "match_001",
                     Region = bootstrapConfig != null ? bootstrapConfig.MockRegion : "local",
-                    SceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1",
+                    SceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "location_test",
                     MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
                     SearchDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockSearchDelaySeconds : 0.8f,
                     WaitForPlayersDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockWaitForPlayersDelaySeconds : 2f,
@@ -260,7 +284,7 @@ namespace Sumo.Online
                 BaseUrl = bootstrapConfig != null ? bootstrapConfig.ProductionBackendBaseUrl : string.Empty,
                 PlayerId = playerId,
                 GameMode = "sumo",
-                DefaultSceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1",
+                DefaultSceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "location_test",
                 DefaultRegion = "auto",
                 DefaultMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
                 PollIntervalSeconds = bootstrapConfig != null ? bootstrapConfig.ProductionPollIntervalSeconds : 1f,
@@ -268,6 +292,40 @@ namespace Sumo.Online
             };
 
             return new ProductionMatchmakingService(productionSettings);
+        }
+
+        private static bool ShouldRetryConnection(StartGameResult result)
+        {
+            if (result.Ok)
+            {
+                return false;
+            }
+
+            return IsGameDoesNotExist(result);
+        }
+
+        private static string BuildConnectionError(StartGameResult result)
+        {
+            if (IsGameDoesNotExist(result))
+            {
+                return "Dedicated server session is not ready. Start the server first or wait until it finishes booting.";
+            }
+
+            return string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? result.ShutdownReason.ToString()
+                : result.ErrorMessage;
+        }
+
+        private static bool IsGameDoesNotExist(StartGameResult result)
+        {
+            string error = result.ErrorMessage ?? string.Empty;
+            string reason = result.ShutdownReason.ToString();
+
+            return error.IndexOf("Game does not exist", StringComparison.OrdinalIgnoreCase) >= 0
+                   || error.IndexOf("32758", StringComparison.OrdinalIgnoreCase) >= 0
+                   || reason.IndexOf("NotFound", StringComparison.OrdinalIgnoreCase) >= 0
+                   || (reason.IndexOf("Game", StringComparison.OrdinalIgnoreCase) >= 0
+                       && reason.IndexOf("Exist", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private string GetOrCreatePlayerId()

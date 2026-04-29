@@ -30,6 +30,11 @@ namespace Sumo
 
         public override void Spawned()
         {
+            if (TryGetComponent(out SumoNpcBallDriver npcDriver) && npcDriver.DisablePlayerOnlyComponents)
+            {
+                return;
+            }
+
             EnsureBridge();
             if (_cameraFollow == null)
             {

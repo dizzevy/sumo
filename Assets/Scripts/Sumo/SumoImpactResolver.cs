@@ -91,6 +91,12 @@ namespace Sumo
         High = 3
     }
 
+    public enum SumoImpactResponseMode : byte
+    {
+        SoftShove = 0,
+        ArcadeBurst = 1
+    }
+
     public readonly struct SumoImpactTierThresholds
     {
         public readonly float TierRefSpeed;
@@ -115,6 +121,9 @@ namespace Sumo
         private const float DefaultMidTierShare01 = 0.15f;
         private const float DefaultTierHysteresisShare01 = 0.02f;
         private const float DefaultBackstepDeadZoneShare01 = 0.02f;
+        private const float DefaultLowTierShoveMultiplier = 2f;
+        private const float DefaultMidTierShoveMultiplier = 2f;
+        private const float DefaultHighTierShoveMultiplier = 3f;
 
         public static SumoAttackerDecision ResolveAttacker(
             float firstApproachSpeed,
@@ -127,7 +136,7 @@ namespace Sumo
             int secondKey)
         {
             float epsilon = Mathf.Max(0f, tieSpeedEpsilon);
-            float delta = firstApproachSpeed - secondApproachSpeed;
+            float delta = SanitizeNonNegativeFinite(firstApproachSpeed) - SanitizeNonNegativeFinite(secondApproachSpeed);
 
             if (Mathf.Abs(delta) > epsilon)
             {
@@ -136,21 +145,134 @@ namespace Sumo
                     : new SumoAttackerDecision(SumoAttackerRole.Second, SumoTieResolvedBy.SpeedDelta);
             }
 
-            if (hasExistingOwner)
-            {
-                return existingOwnerIsFirst
-                    ? new SumoAttackerDecision(SumoAttackerRole.First, SumoTieResolvedBy.ExistingOwner)
-                    : new SumoAttackerDecision(SumoAttackerRole.Second, SumoTieResolvedBy.ExistingOwner);
-            }
-
-            if (resolveTieByLowerKey && firstKey != secondKey)
-            {
-                return firstKey < secondKey
-                    ? new SumoAttackerDecision(SumoAttackerRole.First, SumoTieResolvedBy.KeyOrderFallback)
-                    : new SumoAttackerDecision(SumoAttackerRole.Second, SumoTieResolvedBy.KeyOrderFallback);
-            }
-
             return new SumoAttackerDecision(SumoAttackerRole.Neutral, SumoTieResolvedBy.NeutralWithinEpsilon);
+        }
+
+        public static float ComputeCappedPushDeltaV(
+            float attackerForwardSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale = 1f)
+        {
+            float attackerSpeed = SanitizeNonNegativeFinite(attackerForwardSpeed);
+            float victimSpeed = SanitizeFinite(victimForwardSpeed);
+            float targetSpeed = attackerSpeed * Mathf.Max(0f, targetSpeedScale);
+            return Mathf.Max(0f, targetSpeed - victimSpeed);
+        }
+
+        public static float ComputeCappedPushTargetSpeed(
+            float attackerForwardSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale = 1f)
+        {
+            return SanitizeFinite(victimForwardSpeed)
+                + ComputeCappedPushDeltaV(attackerForwardSpeed, victimForwardSpeed, targetSpeedScale);
+        }
+
+        public static float ComputeCappedPhysicalImpactSpeed(
+            SumoBallPhysicsConfig config,
+            float entryPhysicalForwardSpeed,
+            float currentPhysicalForwardSpeed)
+        {
+            float physicalSpeed = Mathf.Max(
+                SanitizeNonNegativeFinite(entryPhysicalForwardSpeed),
+                SanitizeNonNegativeFinite(currentPhysicalForwardSpeed));
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            return Mathf.Min(physicalSpeed, Mathf.Max(0.01f, maxImpactSpeed));
+        }
+
+        public static SumoImpactResponseMode ResolveImpactResponseMode(
+            SumoBallPhysicsConfig config,
+            float physicalImpactSpeed,
+            bool isDashing)
+        {
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            float speed01 = Mathf.Clamp01(SanitizeNonNegativeFinite(physicalImpactSpeed) / Mathf.Max(0.01f, maxImpactSpeed));
+            float threshold01 = config != null ? config.ArcadeBurstMinSpeed01 : 0.5f;
+            float dashThreshold01 = config != null ? config.ArcadeBurstDashMinSpeed01 : 0.25f;
+            float activeThreshold01 = isDashing ? dashThreshold01 : threshold01;
+
+            return speed01 >= Mathf.Clamp01(activeThreshold01)
+                ? SumoImpactResponseMode.ArcadeBurst
+                : SumoImpactResponseMode.SoftShove;
+        }
+
+        public static float ResolveTierShoveMultiplier(SumoBallPhysicsConfig config, SumoImpactTier tier)
+        {
+            float multiplier;
+            switch (tier)
+            {
+                case SumoImpactTier.Low:
+                    multiplier = config != null ? config.LowTierShoveMultiplier : DefaultLowTierShoveMultiplier;
+                    break;
+
+                case SumoImpactTier.Mid:
+                    multiplier = config != null ? config.MidTierShoveMultiplier : DefaultMidTierShoveMultiplier;
+                    break;
+
+                case SumoImpactTier.High:
+                    multiplier = config != null ? config.HighTierShoveMultiplier : DefaultHighTierShoveMultiplier;
+                    break;
+
+                default:
+                    multiplier = 1f;
+                    break;
+            }
+
+            return ResolveShoveForceMultiplier(multiplier);
+        }
+
+        public static float ResolveShoveForceMultiplier(float multiplier)
+        {
+            return Mathf.Clamp(SanitizeFinite(multiplier), 0.25f, 5f);
+        }
+
+        public static float ApplyShoveForceMultiplier(float value, float multiplier)
+        {
+            return SanitizeNonNegativeFinite(value) * ResolveShoveForceMultiplier(multiplier);
+        }
+
+        public static float ComputeSoftShoveEntryNudgeDeltaV(
+            float physicalImpactSpeed,
+            float relativeClosingSpeed,
+            float victimForwardSpeed,
+            float maxDeltaVPerTick,
+            float targetSpeedScale = 1f)
+        {
+            float entrySpeed = Mathf.Max(
+                SanitizeNonNegativeFinite(physicalImpactSpeed),
+                SanitizeNonNegativeFinite(relativeClosingSpeed));
+            if (entrySpeed <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float targetSpeed = entrySpeed * 0.72f * ResolveShoveForceMultiplier(targetSpeedScale);
+            float requestedDeltaV = targetSpeed - SanitizeFinite(victimForwardSpeed);
+            return ClampImpactDeltaVStep(requestedDeltaV, maxDeltaVPerTick);
+        }
+
+        public static float ClampImpactDeltaVStep(float requestedDeltaV, float maxDeltaVPerTick)
+        {
+            return Mathf.Min(
+                Mathf.Max(0f, SanitizeFinite(requestedDeltaV)),
+                Mathf.Max(0f, SanitizeFinite(maxDeltaVPerTick)));
+        }
+
+        public static bool ShouldUseFirstImpactVisualLaunch(SumoImpactResponseMode responseMode)
+        {
+            return responseMode == SumoImpactResponseMode.ArcadeBurst;
+        }
+
+        public static bool ShouldApplyPredictedVictimPush(
+            bool isPredicted,
+            bool attackerHasInputAuthority,
+            bool victimHasInputAuthority,
+            bool victimCanApplyPredictedProxyForces)
+        {
+            return !isPredicted
+                || (attackerHasInputAuthority
+                    && !victimHasInputAuthority
+                    && victimCanApplyPredictedProxyForces);
         }
 
         public static SumoImpactTier ResolveImpactTier(
@@ -499,6 +621,16 @@ namespace Sumo
         private static float SanitizeNonNegativeFinite(float value)
         {
             if (float.IsNaN(value) || float.IsInfinity(value) || value < 0f)
+            {
+                return 0f;
+            }
+
+            return value;
+        }
+
+        private static float SanitizeFinite(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
             {
                 return 0f;
             }

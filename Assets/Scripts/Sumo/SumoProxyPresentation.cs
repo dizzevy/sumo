@@ -32,16 +32,16 @@ namespace Sumo
         [SerializeField] private bool forceContinuousLocalBallSmoothing = true;
         [SerializeField] private bool enableProxyExtraSmoothing = true;
         [SerializeField] [Range(0f, 1f)] private float authoritativeRemoteBaseBlend = 0.68f;
-        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMinBlend = 0.90f;
-        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMaxBlend = 1.00f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMinBlend = 0.65f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMaxBlend = 0.80f;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localVictimProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyVictimProfile = default;
         [SerializeField] private bool enableFirstImpactVisualLaunch = true;
-        [SerializeField] private float firstImpactVisualLaunchDuration = 0.14f;
-        [SerializeField] private float firstImpactVisualLaunchReleaseDuration = 0.18f;
-        [SerializeField] [Range(0f, 1f)] private float firstImpactVisualLaunchBlend = 1f;
+        [SerializeField] private float firstImpactVisualLaunchDuration = 0.18f;
+        [SerializeField] private float firstImpactVisualLaunchReleaseDuration = 0.28f;
+        [SerializeField] [Range(0f, 1f)] private float firstImpactVisualLaunchBlend = 0.55f;
 
         [Header("Victim Push Smoothing")]
         [SerializeField] private bool enableVictimPushSmoothing = true;
@@ -59,10 +59,10 @@ namespace Sumo
         [SerializeField] private float correctionSpikeTriggerCooldown = 0.06f;
         [SerializeField] private float victimBlendRiseSpeed = 52f;
         [SerializeField] private float victimBlendFallSpeed = 0.35f;
-        [SerializeField] private float victimBlendFloor = 0.96f;
+        [SerializeField] private float victimBlendFloor = 0.65f;
         [SerializeField] private float victimBlendResetThreshold = 0.01f;
-        [SerializeField] [Range(0f, 1f)] private float ultraVictimBlendMin = 0.98f;
-        [SerializeField] [Range(0f, 1f)] private float ultraVictimBlendLock = 1.00f;
+        [SerializeField] [Range(0f, 1f)] private float ultraVictimBlendMin = 0.72f;
+        [SerializeField] [Range(0f, 1f)] private float ultraVictimBlendLock = 0.80f;
         [SerializeField] private float ultraVictimContactHoldSeconds = 0.90f;
 
         [Header("Remote Victim View Lock")]
@@ -73,8 +73,8 @@ namespace Sumo
         [SerializeField] private float remoteVictimViewLockTailHold = 0.90f;
         [SerializeField] private float remoteVictimViewLockRiseSpeed = 60f;
         [SerializeField] private float remoteVictimViewLockFallSpeed = 0.25f;
-        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMinBlend = 0.97f;
-        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMaxBlend = 1.00f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMinBlend = 0.75f;
+        [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockMaxBlend = 0.85f;
 
         [Header("Dedicated Server")]
         [SerializeField] private bool disablePresentationOnDedicatedServer = true;
@@ -813,6 +813,12 @@ namespace Sumo
                 return;
             }
 
+            bool arcadeBurstSignal = collisionController.IsArcadeBurstVictimPresentationActive();
+            if (localPresentation && !arcadeBurstSignal)
+            {
+                return;
+            }
+
             int signalSequence = collisionController.VictimPresentationSignalSequence;
             if (_lastVictimSignalSequence == int.MinValue)
             {
@@ -820,8 +826,11 @@ namespace Sumo
                 if (signalSequence != 0)
                 {
                     float initialSignalStrength = collisionController.VictimPresentationSignalStrength;
-                    TriggerVictimSmoothing(initialSignalStrength);
-                    TriggerFirstImpactVisualLaunch(initialSignalStrength);
+                    TriggerVictimSmoothing(arcadeBurstSignal ? initialSignalStrength : Mathf.Min(initialSignalStrength, 0.30f));
+                    if (arcadeBurstSignal)
+                    {
+                        TriggerFirstImpactVisualLaunch(initialSignalStrength);
+                    }
                 }
                 return;
             }
@@ -833,8 +842,12 @@ namespace Sumo
 
             _lastVictimSignalSequence = signalSequence;
             float networkSignalStrength = collisionController.VictimPresentationSignalStrength;
-            TriggerVictimSmoothing(networkSignalStrength);
-            TriggerFirstImpactVisualLaunch(networkSignalStrength);
+            bool arcadeBurstNetworkSignal = arcadeBurstSignal;
+            TriggerVictimSmoothing(arcadeBurstNetworkSignal ? networkSignalStrength : Mathf.Min(networkSignalStrength, 0.30f));
+            if (arcadeBurstNetworkSignal)
+            {
+                TriggerFirstImpactVisualLaunch(networkSignalStrength);
+            }
         }
 
         private void TryTriggerVictimSmoothingFromLocalCatchupEdge(bool localPresentation)
@@ -855,13 +868,21 @@ namespace Sumo
 
             if (!_wasLocalVictimCatchupActive && localCatchupActive)
             {
-                TriggerVictimSmoothing(1f);
-                TriggerFirstImpactVisualLaunch(Mathf.Max(0.7f, localCatchupAssist));
+                bool arcadeBurstCatchup = collisionController != null && collisionController.IsArcadeBurstVictimPresentationActive();
+                TriggerVictimSmoothing(arcadeBurstCatchup ? 0.90f : 0.75f);
+                if (arcadeBurstCatchup)
+                {
+                    TriggerFirstImpactVisualLaunch(Mathf.Max(0.7f, localCatchupAssist));
+                }
             }
 
             if (localCatchupActive)
             {
-                SustainVictimSmoothing(Mathf.Max(0.95f, localCatchupAssist));
+                bool arcadeBurstCatchup = collisionController != null && collisionController.IsArcadeBurstVictimPresentationActive();
+                float sustainStrength = arcadeBurstCatchup
+                    ? Mathf.Max(0.85f, localCatchupAssist)
+                    : Mathf.Min(0.80f, Mathf.Max(0.70f, localCatchupAssist));
+                SustainVictimSmoothing(sustainStrength);
             }
 
             _wasLocalVictimCatchupActive = localCatchupActive;
@@ -883,6 +904,14 @@ namespace Sumo
             }
 
             if (localPresentation && !CanExtendLocalVictimSmoothingFromCorrectionSpike(localPresentation))
+            {
+                return;
+            }
+
+            if (localPresentation
+                && collisionController != null
+                && collisionController.HasActiveVictimPush()
+                && !collisionController.IsArcadeBurstVictimPresentationActive())
             {
                 return;
             }
@@ -922,10 +951,20 @@ namespace Sumo
                 return;
             }
 
+            if (localPresentation && !collisionController.IsArcadeBurstVictimPresentationActive())
+            {
+                return;
+            }
+
             float pushAssist = collisionController.GetVictimPushAssistForPresentation01();
             if (pushAssist <= victimBlendResetThreshold)
             {
                 return;
+            }
+
+            if (!collisionController.IsArcadeBurstVictimPresentationActive())
+            {
+                pushAssist = Mathf.Min(pushAssist, 0.30f);
             }
 
             SustainVictimSmoothing(pushAssist);
@@ -1076,6 +1115,11 @@ namespace Sumo
         private bool IsUltraLocalVictimActive(bool localPresentation)
         {
             if (!localPresentation || collisionController == null)
+            {
+                return false;
+            }
+
+            if (!collisionController.IsArcadeBurstVictimPresentationActive())
             {
                 return false;
             }

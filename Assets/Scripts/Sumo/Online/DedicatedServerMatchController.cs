@@ -343,7 +343,7 @@ namespace Sumo.Online
 
             if (!_loggedFallbackSpawnWarning)
             {
-                Debug.LogWarning("DedicatedServerMatchController: no SpawnPoint components found in Location1. Using fallback spawn ring.");
+                Debug.LogWarning("DedicatedServerMatchController: no SpawnPoint components found in loaded scene. Using fallback spawn ring.");
                 _loggedFallbackSpawnWarning = true;
             }
 

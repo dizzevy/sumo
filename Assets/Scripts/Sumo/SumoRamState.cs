@@ -46,6 +46,7 @@ namespace Sumo
         public bool ReimpactSuppressedUntilHardBreak;
         public SumoPairState State;
         public SumoTieResolvedBy TieResolvedBy;
+        public SumoImpactResponseMode ImpactResponseMode;
         public int LastTierAttackerRef;
         public SumoImpactTier LastResolvedImpactTier;
         public float EnterFirstApproachSpeed;
@@ -57,6 +58,7 @@ namespace Sumo
         public float InitialImpactElapsed;
         public float InitialVictimDeltaV;
         public float InitialAttackerDeltaV;
+        public float ShoveForceMultiplier;
         public float RamContactBlend;
         public float InitialRamEnergy;
         public float RamEnergy;

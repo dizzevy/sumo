@@ -23,6 +23,7 @@ namespace Sumo.Online
         [SerializeField] private bool autoStartOnlyInBatchMode = true;
         [SerializeField] private bool allowServerStartInEditor;
         [SerializeField] private bool shutdownWhenPlayersDropBelowMinimum;
+        [SerializeField] private bool preservePlacedNetworkObjectsOnSceneTakeover = true;
 
         private NetworkRunner _runner;
 
@@ -73,6 +74,7 @@ namespace Sumo.Online
             _runner.ProvideInput = false;
 
             NetworkSceneManagerDefault sceneManager = runnerObject.AddComponent<NetworkSceneManagerDefault>();
+            sceneManager.IsSceneTakeOverEnabled = true;
 
             RunnerSimulatePhysics3D physicsSimulator = runnerObject.GetComponent<RunnerSimulatePhysics3D>();
             if (physicsSimulator == null)
@@ -125,7 +127,28 @@ namespace Sumo.Online
                     return;
                 }
 
-                await _runner.LoadScene(sceneRef, LoadSceneMode.Single, LocalPhysicsMode.None, true);
+                bool restoreDestroySpawnedPrefabsOnSceneUnload = false;
+                bool originalDestroySpawnedPrefabsOnSceneUnload = sceneManager.DestroySpawnedPrefabsOnSceneUnload;
+
+                if (preservePlacedNetworkObjectsOnSceneTakeover && IsSceneAlreadyLoaded(sceneRef))
+                {
+                    // Fusion's default Single-load cleanup runs before scene takeover. Keep manually placed
+                    // network prefabs alive so they can be registered as scene objects instead of despawned.
+                    sceneManager.DestroySpawnedPrefabsOnSceneUnload = false;
+                    restoreDestroySpawnedPrefabsOnSceneUnload = true;
+                }
+
+                try
+                {
+                    await _runner.LoadScene(sceneRef, LoadSceneMode.Single, LocalPhysicsMode.None, true);
+                }
+                finally
+                {
+                    if (restoreDestroySpawnedPrefabsOnSceneUnload)
+                    {
+                        sceneManager.DestroySpawnedPrefabsOnSceneUnload = originalDestroySpawnedPrefabsOnSceneUnload;
+                    }
+                }
             }
 
             Debug.Log($"Dedicated server started. Session={launch.SessionName}, Match={launch.MatchId}, Region={launch.Region}, MaxPlayers={launch.MaxPlayers}, Port={launch.Port}");
@@ -136,7 +159,7 @@ namespace Sumo.Online
             string fallbackSessionName = bootstrapConfig != null ? bootstrapConfig.MockSessionName : "sumo_match_001";
             string fallbackMatchId = bootstrapConfig != null ? bootstrapConfig.MockMatchId : "match_001";
             string fallbackRegion = "auto";
-            string fallbackScene = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "Location1";
+            string fallbackScene = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "location_test";
             int fallbackMaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : HardMaxPlayers;
             int fallbackMinPlayers = bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2;
             ushort fallbackPort = bootstrapConfig != null ? bootstrapConfig.DefaultServerPort : (ushort)27015;
@@ -162,7 +185,7 @@ namespace Sumo.Online
 
             if (string.IsNullOrWhiteSpace(launch.SceneName))
             {
-                launch.SceneName = "Location1";
+                launch.SceneName = "location_test";
             }
 
             return launch;
@@ -188,6 +211,26 @@ namespace Sumo.Online
             {
                 sceneRef = SceneRef.FromIndex(resolvedIndex);
                 return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsSceneAlreadyLoaded(SceneRef sceneRef)
+        {
+            if (!sceneRef.IsIndex)
+            {
+                return false;
+            }
+
+            int buildIndex = sceneRef.AsIndex;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded && scene.buildIndex == buildIndex)
+                {
+                    return true;
+                }
             }
 
             return false;

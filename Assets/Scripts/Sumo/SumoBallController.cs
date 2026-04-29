@@ -79,6 +79,8 @@ namespace Sumo
         private Tick _lastDashTick;
         private MovementCommand _lastResolvedMovementCommand;
         private bool _hasLastResolvedMovementCommand;
+        private MovementCommand _externalMovementCommand;
+        private bool _hasExternalMovementCommand;
         private int _contactCommandTick = int.MinValue;
         private MovementCommand _contactCommandCache;
         private bool _hasContactCommandCache;
@@ -122,6 +124,33 @@ namespace Sumo
         public float DashPower => _dashPower;
         public Tick LastDashTick => _lastDashTick;
         public SumoBallPhysicsConfig PhysicsConfig => physicsConfig;
+
+        public void SetExternalMovementTarget(Vector3 worldMoveDirection, float targetSpeed, bool hardBrake = false)
+        {
+            Vector3 horizontalDirection = new Vector3(worldMoveDirection.x, 0f, worldMoveDirection.z);
+            Vector3 targetHorizontalVelocity = Vector3.zero;
+
+            if (horizontalDirection.sqrMagnitude > 0.0001f && targetSpeed > 0.0001f)
+            {
+                targetHorizontalVelocity = horizontalDirection.normalized * Mathf.Max(0f, targetSpeed);
+            }
+
+            SetExternalTargetHorizontalVelocity(targetHorizontalVelocity, hardBrake);
+        }
+
+        public void SetExternalTargetHorizontalVelocity(Vector3 targetHorizontalVelocity, bool hardBrake = false)
+        {
+            BuildMovementCommandFromTargetHorizontalVelocity(targetHorizontalVelocity, hardBrake, out _externalMovementCommand);
+            _hasExternalMovementCommand = true;
+            _contactCommandTick = int.MinValue;
+        }
+
+        public void ClearExternalMovementTarget()
+        {
+            _hasExternalMovementCommand = false;
+            _externalMovementCommand = default;
+            _contactCommandTick = int.MinValue;
+        }
 
         public Vector3 GetContactIntentDirection(Vector3 fallbackVelocity)
         {
@@ -692,6 +721,14 @@ namespace Sumo
                 return false;
             }
 
+            if (_hasExternalMovementCommand && (HasStateAuthority || HasInputAuthority))
+            {
+                command = _externalMovementCommand;
+                _lastResolvedMovementCommand = command;
+                _hasLastResolvedMovementCommand = true;
+                return true;
+            }
+
             if (HasStateAuthority || HasInputAuthority)
             {
                 if (GetInput(out SumoInputData input))
@@ -742,9 +779,20 @@ namespace Sumo
                 ? GetTargetHorizontalVelocity(clampedMoveInput, cameraYaw)
                 : Vector3.zero;
 
+            BuildMovementCommandFromTargetHorizontalVelocity(targetHorizontalVelocity, hardBrake, out command);
+        }
+
+        private void BuildMovementCommandFromTargetHorizontalVelocity(
+            Vector3 targetHorizontalVelocity,
+            bool hardBrake,
+            out MovementCommand command)
+        {
+            targetHorizontalVelocity.y = 0f;
+
             Vector3 moveDirection = targetHorizontalVelocity.sqrMagnitude > 0.0001f
                 ? targetHorizontalVelocity.normalized
                 : Vector3.zero;
+            bool hasMoveInput = moveDirection.sqrMagnitude > 0.0001f;
 
             float maxSpeed = Mathf.Max(0.01f, GetMaxSpeed());
             float moveStrength01 = targetHorizontalVelocity.sqrMagnitude > 0.0001f

@@ -15,12 +15,19 @@ namespace Sumo.Gameplay
         [SerializeField] private DropFloorController[] dropFloorControllers;
         [SerializeField, HideInInspector, FormerlySerializedAs("dropFloorController")] private DropFloorController legacyDropFloorController;
         [SerializeField] private SafeZoneManager safeZoneManager;
+        [SerializeField] private NetworkPrefabRef npcPrefab;
 
         [Header("Match Rules")]
         [SerializeField] private int minimumPlayersToStart = 2;
         [SerializeField] private int maximumPlayersPerMatch = 10;
         [SerializeField] private float waitingForMorePlayersSeconds = 30f;
         [SerializeField] private bool closeSessionForLateJoinAfterRoundLock = true;
+
+        [Header("NPC Fill")]
+        [SerializeField] private bool spawnNpcsAtRoundStart = true;
+        [SerializeField] private int minimumNpcsPerRound = 1;
+        [SerializeField] private KeyCode npcStopStartBind = KeyCode.T;
+        [SerializeField] private bool resetNpcMovementOnRoundStart = true;
 
         [Header("Phase Durations (seconds)")]
         [SerializeField] private float preRoundBoxDelay = 0.3f;
@@ -60,6 +67,7 @@ namespace Sumo.Gameplay
         private readonly List<PlayerRef> _activePlayersScratch = new List<PlayerRef>(16);
         private readonly List<PlayerRef> _roundRoster = new List<PlayerRef>(16);
         private readonly List<PlayerRef> _removeScratch = new List<PlayerRef>(16);
+        private readonly List<NetworkObject> _spawnedNpcs = new List<NetworkObject>(16);
 
         private int _eliminationOrderCounter;
         private int _localEliminationNotificationSequence;
@@ -68,6 +76,7 @@ namespace Sumo.Gameplay
         private int _localWinnerNotificationSequence;
         private int _lastNotifiedWinnerRawEncoded = PlayerRef.None.RawEncoded;
         private bool _waitingForMorePlayersCountdownArmed;
+        private bool _runtimeNpcsMoving = true;
 
         public bool ServerEliminatePlayerFromBoundary(PlayerRoundState state)
         {
@@ -114,6 +123,27 @@ namespace Sumo.Gameplay
             RoundIndex = Mathf.Max(0, RoundIndex);
             ResetWaitingForMorePlayersCountdown();
             EnterWaitingForPlayers();
+        }
+
+        private void Update()
+        {
+            if (Runner == null || Object == null || !Object.IsInSimulation)
+            {
+                return;
+            }
+
+            if (!Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(npcStopStartBind))
+            {
+                return;
+            }
+
+            if (HasStateAuthority)
+            {
+                ToggleRuntimeNpcsMoving();
+                return;
+            }
+
+            RPC_RequestToggleRuntimeNpcsMoving();
         }
 
         public override void FixedUpdateNetwork()
@@ -289,6 +319,13 @@ namespace Sumo.Gameplay
                 return;
             }
 
+            DespawnRuntimeNpcs();
+
+            if (resetNpcMovementOnRoundStart)
+            {
+                SetRuntimeNpcsMoving(true);
+            }
+
             RoundIndex = Mathf.Max(1, RoundIndex + 1);
             WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
             _eliminationOrderCounter = 0;
@@ -312,18 +349,12 @@ namespace Sumo.Gameplay
 
                 Vector3 spawnPos;
                 Quaternion spawnRot;
-                if (preRoundBoxSpawner != null)
-                {
-                    preRoundBoxSpawner.TryGetSpawnPose(i, out spawnPos, out spawnRot);
-                }
-                else
-                {
-                    spawnPos = Vector3.up * 5f;
-                    spawnRot = Quaternion.identity;
-                }
+                GetRoundSpawnPose(i, out spawnPos, out spawnRot);
 
                 state.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot);
             }
+
+            SpawnRuntimeNpcsForRound(_roundRoster.Count);
 
             AlivePlayersInRound = CountAlivePlayersInRoster();
             EnterState(MatchState.PreRoundBox, preRoundBoxDelay);
@@ -432,6 +463,7 @@ namespace Sumo.Gameplay
 
         private void EnterWaitingForPlayers()
         {
+            DespawnRuntimeNpcs();
             _roundRoster.Clear();
             _eliminationOrderCounter = 0;
             ResetWaitingForMorePlayersCountdown();
@@ -601,6 +633,136 @@ namespace Sumo.Gameplay
             }
 
             return alive;
+        }
+
+        private void SpawnRuntimeNpcsForRound(int humanPlayerCount)
+        {
+            if (!spawnNpcsAtRoundStart)
+            {
+                return;
+            }
+
+            int npcCount = ResolveNpcCountForRound(humanPlayerCount);
+            if (npcCount <= 0)
+            {
+                return;
+            }
+
+            if (!npcPrefab.IsValid)
+            {
+                Debug.LogWarning("MatchRoundManager: NPC prefab is not assigned. Runtime NPC fill is enabled but no NPCs were spawned.");
+                return;
+            }
+
+            for (int i = 0; i < npcCount; i++)
+            {
+                int spawnIndex = humanPlayerCount + i;
+                GetRoundSpawnPose(spawnIndex, out Vector3 spawnPos, out Quaternion spawnRot);
+
+                NetworkObject npcObject = Runner.Spawn(npcPrefab, spawnPos, spawnRot, PlayerRef.None);
+                if (npcObject == null)
+                {
+                    Debug.LogError($"MatchRoundManager: Runner.Spawn returned null for NPC #{i + 1}.");
+                    continue;
+                }
+
+                ConfigureRuntimeNpc(npcObject, i);
+                _spawnedNpcs.Add(npcObject);
+            }
+
+            Debug.Log($"MatchRoundManager: spawned {_spawnedNpcs.Count} runtime NPCs for round {RoundIndex}.");
+        }
+
+        private int ResolveNpcCountForRound(int humanPlayerCount)
+        {
+            int maxBalls = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
+            int freeSlots = Mathf.Max(0, maxBalls - Mathf.Max(0, humanPlayerCount));
+            if (freeSlots <= 0)
+            {
+                return 0;
+            }
+
+            int minNpcs = Mathf.Clamp(Mathf.Max(1, minimumNpcsPerRound), 1, freeSlots);
+            return UnityEngine.Random.Range(minNpcs, freeSlots + 1);
+        }
+
+        private void ConfigureRuntimeNpc(NetworkObject npcObject, int localIndex)
+        {
+            if (npcObject == null)
+            {
+                return;
+            }
+
+            npcObject.name = $"RuntimeNpc_R{RoundIndex}_{localIndex + 1}";
+
+            Sumo.SumoNpcBallDriver npcDriver = npcObject.GetComponent<Sumo.SumoNpcBallDriver>();
+            if (npcDriver != null)
+            {
+                npcDriver.ConfigureRuntimeSpawnedNpc();
+                npcDriver.SetMoving(_runtimeNpcsMoving);
+            }
+            else
+            {
+                Debug.LogWarning($"MatchRoundManager: spawned NPC prefab '{npcObject.name}' is missing SumoNpcBallDriver.");
+            }
+        }
+
+        private void DespawnRuntimeNpcs()
+        {
+            if (_spawnedNpcs.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _spawnedNpcs.Count; i++)
+            {
+                NetworkObject npcObject = _spawnedNpcs[i];
+                if (npcObject != null && Runner != null)
+                {
+                    Runner.Despawn(npcObject);
+                }
+            }
+
+            _spawnedNpcs.Clear();
+        }
+
+        private void ToggleRuntimeNpcsMoving()
+        {
+            SetRuntimeNpcsMoving(!_runtimeNpcsMoving);
+        }
+
+        private void SetRuntimeNpcsMoving(bool moving)
+        {
+            _runtimeNpcsMoving = moving;
+
+            for (int i = 0; i < _spawnedNpcs.Count; i++)
+            {
+                NetworkObject npcObject = _spawnedNpcs[i];
+                if (npcObject == null)
+                {
+                    continue;
+                }
+
+                Sumo.SumoNpcBallDriver npcDriver = npcObject.GetComponent<Sumo.SumoNpcBallDriver>();
+                if (npcDriver != null)
+                {
+                    npcDriver.SetMoving(moving);
+                }
+            }
+
+            Debug.Log($"MatchRoundManager: runtime NPC movement {(moving ? "started" : "stopped")}.");
+        }
+
+        private void GetRoundSpawnPose(int index, out Vector3 position, out Quaternion rotation)
+        {
+            if (preRoundBoxSpawner != null)
+            {
+                preRoundBoxSpawner.TryGetSpawnPose(index, out position, out rotation);
+                return;
+            }
+
+            position = Vector3.up * 5f;
+            rotation = Quaternion.identity;
         }
 
         private bool TryEliminatePlayerState(PlayerRoundState state, PlayerRef player)
@@ -782,10 +944,17 @@ namespace Sumo.Gameplay
             _lastNotifiedWinnerRawEncoded = winnerRawEncoded;
         }
 
+        [Rpc(RpcSources.All, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+        private void RPC_RequestToggleRuntimeNpcsMoving()
+        {
+            ToggleRuntimeNpcsMoving();
+        }
+
         private void OnValidate()
         {
             minimumPlayersToStart = Mathf.Max(2, minimumPlayersToStart);
             maximumPlayersPerMatch = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
+            minimumNpcsPerRound = Mathf.Max(1, minimumNpcsPerRound);
             waitingForMorePlayersSeconds = Mathf.Max(0f, waitingForMorePlayersSeconds);
             preRoundBoxDelay = Mathf.Max(0f, preRoundBoxDelay);
             countdownSeconds = Mathf.Max(0f, countdownSeconds);

@@ -56,10 +56,22 @@ namespace Sumo.Gameplay
         private NetworkBool _lastAppliedAlive;
         private NetworkBool _lastAppliedSpectator;
         private bool[] _gameplayRendererDefaultEnabled;
+        private bool _ignoreForNpcDriver;
+
+        private void Awake()
+        {
+            _ignoreForNpcDriver = TryGetComponent(out Sumo.SumoNpcBallDriver npcDriver)
+                && npcDriver.DisablePlayerOnlyComponents;
+        }
 
         public override void Spawned()
         {
             CacheComponentsIfNeeded();
+
+            if (ShouldIgnoreForNpcDriver())
+            {
+                return;
+            }
 
             if (HasStateAuthority)
             {
@@ -85,11 +97,21 @@ namespace Sumo.Gameplay
 
         public override void Render()
         {
+            if (ShouldIgnoreForNpcDriver())
+            {
+                return;
+            }
+
             ApplyState(force: false);
         }
 
         public override void FixedUpdateNetwork()
         {
+            if (ShouldIgnoreForNpcDriver())
+            {
+                return;
+            }
+
             if (!HasStateAuthority || !PendingSpectatorTransition)
             {
                 return;
@@ -120,6 +142,18 @@ namespace Sumo.Gameplay
             PendingSpectatorEulerAngles = Vector3.zero;
             TeleportServer(position, rotation);
             ApplyState(force: true);
+        }
+
+        private bool ShouldIgnoreForNpcDriver()
+        {
+            if (_ignoreForNpcDriver)
+            {
+                return true;
+            }
+
+            _ignoreForNpcDriver = TryGetComponent(out Sumo.SumoNpcBallDriver npcDriver)
+                && npcDriver.DisablePlayerOnlyComponents;
+            return _ignoreForNpcDriver;
         }
 
         public void ServerEliminateToSpectator(int eliminationOrder, Vector3 spectatorPosition, Quaternion spectatorRotation)

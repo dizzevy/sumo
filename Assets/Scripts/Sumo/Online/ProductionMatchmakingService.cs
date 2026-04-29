@@ -15,7 +15,7 @@ namespace Sumo.Online
             public string BaseUrl;
             public string PlayerId;
             public string GameMode = "sumo";
-            public string DefaultSceneName = "Location1";
+            public string DefaultSceneName = "location_test";
             public string DefaultRegion = "auto";
             public int DefaultMaxPlayers = BootstrapConfig.TargetMaxPlayers;
             public float PollIntervalSeconds = 1f;

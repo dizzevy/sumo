@@ -14,7 +14,7 @@ namespace Sumo.Online
             public string SessionName = "sumo_match_001";
             public string MatchId = "match_001";
             public string Region = "local";
-            public string SceneName = "Location1";
+            public string SceneName = "location_test";
             public int MaxPlayers = BootstrapConfig.TargetMaxPlayers;
             public float SearchDelaySeconds = 0.8f;
             public float WaitForPlayersDelaySeconds = 2.0f;
