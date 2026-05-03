@@ -13,23 +13,27 @@ namespace Sumo.Gameplay
         [SerializeField] private NetworkObject networkObject;
         [SerializeField] private PlayerRoundState playerRoundState;
         [SerializeField] private MatchRoundManager matchRoundManager;
+        [SerializeField] private Sumo.SumoBallController ballController;
 
         [Header("Runtime UI")]
         [SerializeField] private Canvas canvasRoot;
         [SerializeField] private Text primaryText;
         [SerializeField] private Text secondaryText;
         [SerializeField] private Text alertText;
+        [SerializeField] private Text abilityText;
+        [SerializeField] private Image abilityFillImage;
         [SerializeField] private bool autoCreateCanvas = true;
         [SerializeField] private int sortingOrder = 450;
 
         [Header("Layout")]
-        [SerializeField] private Vector2 panelSize = new Vector2(640f, 98f);
+        [SerializeField] private Vector2 panelSize = new Vector2(760f, 220f);
         [SerializeField] private Vector2 panelOffset = new Vector2(0f, -14f);
 
         [Header("Messages")]
         [SerializeField] private float alertMessageDuration = 2.1f;
 
         private Canvas _runtimeCanvas;
+        private GameObject _abilityPanel;
         private bool _uiReady;
         private int _lastEliminationSequenceSeen = -1;
         private int _lastWinnerSequenceSeen = -1;
@@ -37,6 +41,12 @@ namespace Sumo.Gameplay
         private string _alertMessage;
         private bool _lastSpectatorState;
         private bool _spectatorStateKnown;
+        private bool _returnToMenuRequested;
+        private bool _abilityVisualInitialized;
+        private bool _lastAbilityNetworkActive;
+        private float _abilityVisualStamina01 = 1f;
+        private Sumo.SumoPlayerClass _abilityVisualClass = Sumo.SumoPlayerClass.None;
+        private static Sprite _staminaGradientSprite;
 
         private void Awake()
         {
@@ -62,6 +72,14 @@ namespace Sumo.Gameplay
             CacheReferencesIfNeeded();
             ResolveManagerIfNeeded();
 
+            MatchState currentState = MatchState.WaitingForPlayers;
+            bool hasRoundState = matchRoundManager != null && matchRoundManager.TryGetState(out currentState);
+            if (hasRoundState && currentState == MatchState.ClassSelection)
+            {
+                DisableUi();
+                return;
+            }
+
             if (!_uiReady)
             {
                 EnsureUi();
@@ -71,22 +89,27 @@ namespace Sumo.Gameplay
                 }
             }
 
-            if (matchRoundManager == null)
+            if (!hasRoundState)
             {
                 primaryText.text = "Connecting...";
                 secondaryText.text = string.Empty;
                 alertText.text = string.Empty;
+                if (_abilityPanel != null)
+                {
+                    _abilityPanel.SetActive(false);
+                }
+
                 return;
             }
 
-            UpdateMainTexts();
+            UpdateMainTexts(currentState);
+            UpdateAbilityUi(currentState);
             UpdateNotifications();
             UpdateAlertText();
         }
 
-        private void UpdateMainTexts()
+        private void UpdateMainTexts(MatchState state)
         {
-            MatchState state = matchRoundManager.State;
             int seconds = Mathf.Max(0, Mathf.CeilToInt(matchRoundManager.RemainingPhaseTime));
             int alive = Mathf.Max(0, matchRoundManager.AlivePlayersInRound);
             int round = Mathf.Max(0, matchRoundManager.RoundIndex);
@@ -113,6 +136,10 @@ namespace Sumo.Gameplay
                         primaryText.text = $"Players: {activePlayers}/{maxPlayers}";
                     }
 
+                    break;
+
+                case MatchState.ClassSelection:
+                    primaryText.text = $"Choose class: {seconds}s";
                     break;
 
                 case MatchState.PreRoundBox:
@@ -143,8 +170,16 @@ namespace Sumo.Gameplay
                     primaryText.text = $"Round finished. Next in: {seconds}";
                     break;
 
+                case MatchState.Scoreboard:
+                    primaryText.text = $"Scoreboard | Next round in: {seconds}s";
+                    break;
+
                 case MatchState.ResetRound:
                     primaryText.text = "Resetting round...";
+                    break;
+
+                case MatchState.MatchFinished:
+                    primaryText.text = $"Final score | Menu in: {seconds}s";
                     break;
 
                 default:
@@ -153,7 +188,22 @@ namespace Sumo.Gameplay
             }
 
             string modeText = spectator ? "SPECTATING" : "PLAYING";
-            secondaryText.text = $"Alive: {alive}   |   {modeText}";
+            if (state == MatchState.Scoreboard || state == MatchState.MatchFinished)
+            {
+                secondaryText.text = BuildScoreboardText(state == MatchState.MatchFinished);
+                TryReturnToMainMenuAfterFinalScore(state);
+            }
+            else if (state == MatchState.ClassSelection)
+            {
+                bool ready = playerRoundState != null && playerRoundState.IsClientReady;
+                secondaryText.text = ready ? "Class locked. Waiting for others." : "Select a class and confirm.";
+                _returnToMenuRequested = false;
+            }
+            else
+            {
+                secondaryText.text = $"Alive: {alive}   |   {modeText}";
+                _returnToMenuRequested = false;
+            }
 
             if (!_spectatorStateKnown)
             {
@@ -166,6 +216,124 @@ namespace Sumo.Gameplay
             }
 
             _lastSpectatorState = spectator;
+        }
+
+        private void UpdateAbilityUi(MatchState matchState)
+        {
+            if (_abilityPanel == null || abilityText == null || abilityFillImage == null)
+            {
+                return;
+            }
+
+            if (ballController == null)
+            {
+                ballController = GetComponent<Sumo.SumoBallController>();
+            }
+
+            Sumo.SumoPlayerClass playerClass = ballController != null
+                ? ballController.AuthoritativeClass
+                : Sumo.SumoPlayerClass.None;
+            if (playerClass == Sumo.SumoPlayerClass.None && ballController != null)
+            {
+                playerClass = ballController.CurrentClass;
+            }
+
+            bool show = ballController != null
+                        && playerClass != Sumo.SumoPlayerClass.None
+                        && matchRoundManager != null
+                        && matchState != MatchState.ClassSelection;
+
+            _abilityPanel.SetActive(show);
+            if (!show)
+            {
+                ResetAbilityVisualState();
+                return;
+            }
+
+            Sumo.SumoPlayerClassDefinition definition = Sumo.SumoPlayerClassCatalog.GetDefinition(playerClass);
+            float networkStamina = Mathf.Clamp01(ballController.AuthoritativeAbilityStamina01);
+            bool active = ballController.AuthoritativeAbilityActive;
+            bool unlocked = matchRoundManager == null || matchRoundManager.ClassAbilitiesUnlocked;
+            if (!unlocked)
+            {
+                ResetAbilityVisualState();
+                abilityText.text = $"{definition.DisplayName}: {definition.AbilityName} | Locked until first zone";
+                abilityFillImage.fillAmount = 1f;
+                abilityFillImage.color = new Color(0.65f, 0.72f, 0.82f, 1f);
+                return;
+            }
+
+            float stamina = UpdateAbilityVisualStamina(definition, active, networkStamina);
+            bool ready = stamina >= 0.999f && !active;
+            int seconds = 0;
+            if (active)
+            {
+                seconds = Mathf.Max(0, Mathf.CeilToInt(stamina * definition.AbilityActiveSeconds));
+            }
+            else if (!ready)
+            {
+                seconds = Mathf.Max(0, Mathf.CeilToInt((1f - stamina) * definition.AbilityRechargeSeconds));
+            }
+
+            string abilityState = active
+                ? $"Active: {seconds}s left"
+                : (ready ? "Ready (F)" : $"Recharge: {seconds}s");
+
+            abilityText.text = $"{definition.DisplayName}: {definition.AbilityName} | {abilityState}";
+            abilityFillImage.fillAmount = stamina;
+            abilityFillImage.color = Color.white;
+        }
+
+        private float UpdateAbilityVisualStamina(Sumo.SumoPlayerClassDefinition definition, bool networkActive, float networkStamina)
+        {
+            if (!_abilityVisualInitialized || _abilityVisualClass != definition.Class)
+            {
+                _abilityVisualInitialized = true;
+                _abilityVisualClass = definition.Class;
+                _abilityVisualStamina01 = networkActive ? 1f : Mathf.Clamp01(networkStamina);
+                _lastAbilityNetworkActive = networkActive;
+            }
+
+            float deltaTime = Mathf.Max(0f, Time.deltaTime);
+            if (networkActive)
+            {
+                if (!_lastAbilityNetworkActive)
+                {
+                    _abilityVisualStamina01 = 1f;
+                }
+
+                float activeSeconds = Mathf.Max(0.01f, definition.AbilityActiveSeconds);
+                _abilityVisualStamina01 = Mathf.Max(0f, _abilityVisualStamina01 - deltaTime / activeSeconds);
+            }
+            else
+            {
+                if (_lastAbilityNetworkActive)
+                {
+                    _abilityVisualStamina01 = 0f;
+                }
+
+                if (networkStamina >= 0.999f)
+                {
+                    _abilityVisualStamina01 = 1f;
+                }
+                else
+                {
+                    float rechargeSeconds = Mathf.Max(0.01f, definition.AbilityRechargeSeconds);
+                    _abilityVisualStamina01 = Mathf.Min(1f, _abilityVisualStamina01 + deltaTime / rechargeSeconds);
+                    _abilityVisualStamina01 = Mathf.Max(_abilityVisualStamina01, Mathf.Clamp01(networkStamina));
+                }
+            }
+
+            _lastAbilityNetworkActive = networkActive;
+            return Mathf.Clamp01(_abilityVisualStamina01);
+        }
+
+        private void ResetAbilityVisualState()
+        {
+            _abilityVisualInitialized = false;
+            _lastAbilityNetworkActive = false;
+            _abilityVisualStamina01 = 1f;
+            _abilityVisualClass = Sumo.SumoPlayerClass.None;
         }
 
         private void UpdateNotifications()
@@ -240,6 +408,11 @@ namespace Sumo.Gameplay
 
         private string FormatPlayerLabel(int rawEncoded)
         {
+            if (matchRoundManager != null)
+            {
+                return matchRoundManager.FormatParticipantLabel(rawEncoded);
+            }
+
             if (rawEncoded < 0)
             {
                 return $"Bot {Mathf.Abs(rawEncoded)}";
@@ -262,6 +435,74 @@ namespace Sumo.Gameplay
             }
 
             return $"Player {rawEncoded}";
+        }
+
+        private string BuildScoreboardText(bool includeWinner)
+        {
+            if (matchRoundManager == null || matchRoundManager.ScoreParticipantCount <= 0)
+            {
+                return string.Empty;
+            }
+
+            int count = Mathf.Min(MatchRoundManager.ScoreCapacity, matchRoundManager.ScoreParticipantCount);
+            int target = Mathf.Max(1, matchRoundManager.MatchWinTarget);
+            System.Text.StringBuilder builder = new System.Text.StringBuilder(128);
+
+            if (includeWinner && matchRoundManager.MatchWinnerRawEncoded != PlayerRef.None.RawEncoded)
+            {
+                builder.Append("Winner: ");
+                builder.Append(matchRoundManager.FormatParticipantLabel(matchRoundManager.MatchWinnerRawEncoded));
+                builder.AppendLine();
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int raw = matchRoundManager.GetScoreParticipantRawEncoded(i);
+                int wins = matchRoundManager.GetScoreParticipantWins(i);
+                builder.Append(matchRoundManager.FormatParticipantLabel(raw));
+                builder.Append(": ");
+                builder.Append(wins);
+                builder.Append("/");
+                builder.Append(target);
+
+                if (i < count - 1)
+                {
+                    builder.Append((i + 1) % 4 == 0 ? "\n" : "   ");
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private async void TryReturnToMainMenuAfterFinalScore(MatchState state)
+        {
+            if (_returnToMenuRequested
+                || state != MatchState.MatchFinished
+                || matchRoundManager == null
+                || !matchRoundManager.ShouldReturnToMainMenuAfterMatch
+                || matchRoundManager.RemainingPhaseTime > 0.05f)
+            {
+                return;
+            }
+
+            _returnToMenuRequested = true;
+
+            Sumo.Online.MatchmakingClient matchmakingClient = FindObjectOfType<Sumo.Online.MatchmakingClient>(true);
+            if (matchmakingClient == null)
+            {
+                _returnToMenuRequested = false;
+                return;
+            }
+
+            try
+            {
+                await matchmakingClient.ReturnToMainMenuAsync();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex);
+                _returnToMenuRequested = false;
+            }
         }
 
         private void EnsureUi()
@@ -329,8 +570,8 @@ namespace Sumo.Gameplay
                 font,
                 22,
                 FontStyle.Normal,
-                new Vector2(0f, -50f),
-                new Vector2(panelSize.x - 18f, 30f),
+                new Vector2(0f, -64f),
+                new Vector2(panelSize.x - 18f, 126f),
                 new Color(0.82f, 0.92f, 1f, 0.98f));
 
             alertText = CreateText(
@@ -339,11 +580,152 @@ namespace Sumo.Gameplay
                 font,
                 21,
                 FontStyle.Bold,
-                new Vector2(0f, -78f),
+                new Vector2(0f, -186f),
                 new Vector2(panelSize.x - 24f, 24f),
                 new Color(1f, 0.9f, 0.62f, 1f));
 
+            CreateAbilityPanel(canvasObject.transform, font);
+
             canvasRoot = _runtimeCanvas;
+        }
+
+        private void CreateAbilityPanel(Transform parent, Font font)
+        {
+            _abilityPanel = new GameObject("AbilityPanel");
+            _abilityPanel.transform.SetParent(parent, false);
+
+            RectTransform panelRect = _abilityPanel.AddComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(0.5f, 0f);
+            panelRect.anchorMax = new Vector2(0.5f, 0f);
+            panelRect.pivot = new Vector2(0.5f, 0f);
+            panelRect.anchoredPosition = new Vector2(0f, 34f);
+            panelRect.sizeDelta = new Vector2(760f, 96f);
+
+            Image background = _abilityPanel.AddComponent<Image>();
+            background.color = new Color(0.02f, 0.05f, 0.09f, 0.74f);
+
+            abilityText = CreateText(
+                "AbilityText",
+                panelRect,
+                font,
+                22,
+                FontStyle.Bold,
+                new Vector2(0f, -10f),
+                new Vector2(728f, 30f),
+                new Color(0.92f, 0.97f, 1f, 1f));
+
+            GameObject barBackgroundObject = new GameObject("AbilityBarBackground");
+            barBackgroundObject.transform.SetParent(panelRect, false);
+            RectTransform barBackgroundRect = barBackgroundObject.AddComponent<RectTransform>();
+            barBackgroundRect.anchorMin = new Vector2(0.5f, 0f);
+            barBackgroundRect.anchorMax = new Vector2(0.5f, 0f);
+            barBackgroundRect.pivot = new Vector2(0.5f, 0f);
+            barBackgroundRect.anchoredPosition = new Vector2(0f, 18f);
+            barBackgroundRect.sizeDelta = new Vector2(700f, 28f);
+
+            Image barBackground = barBackgroundObject.AddComponent<Image>();
+            barBackground.color = new Color(0f, 0f, 0f, 0.62f);
+
+            GameObject fillObject = new GameObject("AbilityBarFill");
+            fillObject.transform.SetParent(barBackgroundObject.transform, false);
+            RectTransform fillRect = fillObject.AddComponent<RectTransform>();
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = Vector2.one;
+            fillRect.offsetMin = Vector2.zero;
+            fillRect.offsetMax = Vector2.zero;
+
+            abilityFillImage = fillObject.AddComponent<Image>();
+            abilityFillImage.sprite = GetStaminaGradientSprite();
+            abilityFillImage.type = Image.Type.Filled;
+            abilityFillImage.fillMethod = Image.FillMethod.Horizontal;
+            abilityFillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
+            abilityFillImage.fillAmount = 1f;
+            abilityFillImage.color = Color.white;
+
+            for (int i = 1; i < 10; i++)
+            {
+                GameObject tickObject = new GameObject($"AbilityBarTick{i}");
+                tickObject.transform.SetParent(barBackgroundObject.transform, false);
+
+                RectTransform tickRect = tickObject.AddComponent<RectTransform>();
+                float x = i / 10f;
+                tickRect.anchorMin = new Vector2(x, 0f);
+                tickRect.anchorMax = new Vector2(x, 1f);
+                tickRect.pivot = new Vector2(0.5f, 0.5f);
+                tickRect.anchoredPosition = Vector2.zero;
+                tickRect.sizeDelta = new Vector2(2f, 0f);
+
+                Image tickImage = tickObject.AddComponent<Image>();
+                tickImage.color = new Color(1f, 1f, 1f, 0.32f);
+                tickImage.raycastTarget = false;
+            }
+
+            _abilityPanel.SetActive(false);
+        }
+
+        private static Sprite GetStaminaGradientSprite()
+        {
+            if (_staminaGradientSprite != null)
+            {
+                return _staminaGradientSprite;
+            }
+
+            const int width = 256;
+            const int height = 24;
+            Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
+            {
+                name = "RuntimeStaminaGradient"
+            };
+
+            for (int x = 0; x < width; x++)
+            {
+                float t = x / (width - 1f);
+                Color baseColor = EvaluateStaminaGradient(t);
+                for (int y = 0; y < height; y++)
+                {
+                    float vertical = y / (height - 1f);
+                    float highlight = Mathf.SmoothStep(0.55f, 1f, vertical) * 0.22f;
+                    Color color = Color.Lerp(baseColor, Color.white, highlight);
+                    color.a = 1f;
+                    texture.SetPixel(x, y, color);
+                }
+            }
+
+            texture.Apply(false, true);
+            _staminaGradientSprite = Sprite.Create(
+                texture,
+                new Rect(0f, 0f, width, height),
+                new Vector2(0.5f, 0.5f),
+                100f,
+                0,
+                SpriteMeshType.FullRect);
+            return _staminaGradientSprite;
+        }
+
+        private static Color EvaluateStaminaGradient(float t)
+        {
+            Color empty = new Color(0.95f, 0.18f, 0.22f, 1f);
+            Color low = new Color(1f, 0.58f, 0.14f, 1f);
+            Color mid = new Color(1f, 0.9f, 0.22f, 1f);
+            Color high = new Color(0.25f, 0.95f, 0.52f, 1f);
+            Color full = new Color(0.16f, 0.72f, 1f, 1f);
+
+            if (t < 0.25f)
+            {
+                return Color.Lerp(empty, low, t / 0.25f);
+            }
+
+            if (t < 0.55f)
+            {
+                return Color.Lerp(low, mid, (t - 0.25f) / 0.30f);
+            }
+
+            if (t < 0.82f)
+            {
+                return Color.Lerp(mid, high, (t - 0.55f) / 0.27f);
+            }
+
+            return Color.Lerp(high, full, (t - 0.82f) / 0.18f);
         }
 
         private static Text CreateText(
@@ -394,12 +776,18 @@ namespace Sumo.Gameplay
                 canvasRoot.gameObject.SetActive(false);
             }
 
+            if (_abilityPanel != null)
+            {
+                _abilityPanel.SetActive(false);
+            }
+
             _uiReady = false;
             _lastEliminationSequenceSeen = -1;
             _lastWinnerSequenceSeen = -1;
             _spectatorStateKnown = false;
             _alertUntil = 0f;
             _alertMessage = string.Empty;
+            ResetAbilityVisualState();
         }
 
         private void ResolveManagerIfNeeded()
@@ -421,12 +809,17 @@ namespace Sumo.Gameplay
             {
                 playerRoundState = GetComponent<PlayerRoundState>();
             }
+
+            if (ballController == null)
+            {
+                ballController = GetComponent<Sumo.SumoBallController>();
+            }
         }
 
         private void OnValidate()
         {
             panelSize.x = Mathf.Max(320f, panelSize.x);
-            panelSize.y = Mathf.Max(80f, panelSize.y);
+            panelSize.y = Mathf.Max(180f, panelSize.y);
             sortingOrder = Mathf.Clamp(sortingOrder, 0, 5000);
             alertMessageDuration = Mathf.Max(0.65f, alertMessageDuration);
             CacheReferencesIfNeeded();

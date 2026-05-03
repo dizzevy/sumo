@@ -18,8 +18,11 @@ namespace Sumo
         [SerializeField] private float minPitch = -25f;
         [SerializeField] private float maxPitch = 70f;
         [SerializeField] private bool lockCursorOnSpawn = true;
+        [SerializeField] private SumoBallController ballController;
 
         private bool _callbacksRegistered;
+        private bool _abilityPressedBuffered;
+        private int _abilitySequence;
         private float _yaw;
         private float _pitch = 15f;
 
@@ -80,6 +83,17 @@ namespace Sumo
             {
                 SetCursorLock(true);
             }
+
+            if (WasAbilityPressedThisFrame())
+            {
+                _abilityPressedBuffered = true;
+                _abilitySequence++;
+                CacheBallControllerIfNeeded();
+                if (ballController != null)
+                {
+                    ballController.PreviewClassAbilityPress(_abilitySequence);
+                }
+            }
         }
 
         public void OnInput(NetworkRunner runner, NetworkInput input)
@@ -103,8 +117,10 @@ namespace Sumo
             {
                 Move = moveInput,
                 CameraYaw = Mathf.Repeat(_yaw, 360f),
-                Buttons = ReadButtons()
+                Buttons = ReadButtons(_abilityPressedBuffered),
+                AbilitySequence = _abilitySequence
             };
+            _abilityPressedBuffered = false;
 
             input.Set(data);
         }
@@ -208,11 +224,20 @@ namespace Sumo
             return move;
         }
 
-        private static NetworkButtons ReadButtons()
+        private static NetworkButtons ReadButtons(bool abilityPressedBuffered)
         {
             NetworkButtons buttons = default;
             buttons.Set((int)SumoInputButton.Brake, IsBrakePressed());
+            buttons.Set((int)SumoInputButton.Ability, abilityPressedBuffered);
             return buttons;
+        }
+
+        private void CacheBallControllerIfNeeded()
+        {
+            if (ballController == null)
+            {
+                ballController = GetComponent<SumoBallController>();
+            }
         }
 
         private static bool IsBrakePressed()
@@ -227,6 +252,40 @@ namespace Sumo
 
 #if ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKey(KeyCode.Space);
+#else
+            return false;
+#endif
+        }
+
+        private static bool IsAbilityPressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                return keyboard.fKey.isPressed;
+            }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKey(KeyCode.F);
+#else
+            return false;
+#endif
+        }
+
+        private static bool WasAbilityPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                return keyboard.fKey.wasPressedThisFrame;
+            }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.F);
 #else
             return false;
 #endif

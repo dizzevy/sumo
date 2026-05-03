@@ -16,9 +16,11 @@ namespace Sumo.Online
             public string Region = "local";
             public string SceneName = "location_test";
             public int MaxPlayers = BootstrapConfig.TargetMaxPlayers;
+            public int RequiredPlayers = 2;
             public float SearchDelaySeconds = 0.8f;
-            public float WaitForPlayersDelaySeconds = 2.0f;
+            public float WaitForPlayersDelaySeconds = 30.0f;
             public float ServerBootDelaySeconds = 1.5f;
+            public bool AutoFillRequiredPlayers;
         }
 
         private readonly Settings _settings;
@@ -42,7 +44,12 @@ namespace Sumo.Online
                 TicketId = $"mock_ticket_{number:0000}",
                 PlayerId = _settings.PlayerId,
                 Status = MatchTicketStatus.Searching,
-                CreatedAtUtc = DateTime.UtcNow
+                CreatedAtUtc = DateTime.UtcNow,
+                PlayersFound = 1,
+                RequiredPlayers = Mathf.Max(2, _settings.RequiredPlayers),
+                MaxPlayers = Mathf.Clamp(_settings.MaxPlayers, 2, BootstrapConfig.TargetMaxPlayers),
+                CountdownRemainingSeconds = 0f,
+                CountdownActive = false
             };
 
             return Task.FromResult(ticket);
@@ -77,10 +84,24 @@ namespace Sumo.Online
             }
 
             ticket.Status = MatchTicketStatus.WaitingForPlayers;
-            await DelayWithCancellationAsync(_settings.WaitForPlayersDelaySeconds, ticket, token);
+            ticket.PlayersFound = 1;
+            ticket.CountdownActive = false;
+            ticket.CountdownRemainingSeconds = 0f;
+            await DelayWithCancellationAsync(_settings.SearchDelaySeconds, ticket, token);
+
+            if (!_settings.AutoFillRequiredPlayers)
+            {
+                await WaitIndefinitelyForPlayersAsync(ticket, token);
+            }
+
+            ticket.PlayersFound = ticket.RequiredPlayers;
+            ticket.CountdownActive = true;
+            await CountdownWithCancellationAsync(_settings.WaitForPlayersDelaySeconds, ticket, token);
+            ticket.CountdownActive = false;
+            ticket.CountdownRemainingSeconds = 0f;
 
             ticket.Status = MatchTicketStatus.MatchFound;
-            await DelayWithCancellationAsync(_settings.SearchDelaySeconds, ticket, token);
+            await DelayWithCancellationAsync(0.1f, ticket, token);
 
             ticket.Status = MatchTicketStatus.StartingServer;
             await DelayWithCancellationAsync(_settings.ServerBootDelaySeconds, ticket, token);
@@ -118,6 +139,52 @@ namespace Sumo.Online
                 int step = Math.Min(200, totalMs - elapsedMs);
                 await Task.Delay(step, token);
                 elapsedMs += step;
+            }
+        }
+
+        private async Task CountdownWithCancellationAsync(float seconds, MatchTicket ticket, CancellationToken token)
+        {
+            int totalMs = Mathf.Max(0, Mathf.RoundToInt(seconds * 1000f));
+            int elapsedMs = 0;
+
+            while (elapsedMs < totalMs)
+            {
+                token.ThrowIfCancellationRequested();
+
+                if (IsCancelled(ticket.TicketId))
+                {
+                    ticket.Status = MatchTicketStatus.Cancelled;
+                    throw new OperationCanceledException("Matchmaking was cancelled.", token);
+                }
+
+                int remainingMs = Mathf.Max(0, totalMs - elapsedMs);
+                ticket.CountdownRemainingSeconds = remainingMs / 1000f;
+
+                int step = Math.Min(200, totalMs - elapsedMs);
+                await Task.Delay(step, token);
+                elapsedMs += step;
+            }
+
+            ticket.CountdownRemainingSeconds = 0f;
+        }
+
+        private async Task WaitIndefinitelyForPlayersAsync(MatchTicket ticket, CancellationToken token)
+        {
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+
+                if (IsCancelled(ticket.TicketId))
+                {
+                    ticket.Status = MatchTicketStatus.Cancelled;
+                    throw new OperationCanceledException("Matchmaking was cancelled.", token);
+                }
+
+                ticket.Status = MatchTicketStatus.WaitingForPlayers;
+                ticket.PlayersFound = 1;
+                ticket.CountdownActive = false;
+                ticket.CountdownRemainingSeconds = 0f;
+                await Task.Delay(250, token);
             }
         }
 

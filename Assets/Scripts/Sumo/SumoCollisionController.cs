@@ -877,7 +877,9 @@ namespace Sumo
                 }
 
                 Vector3 otherVelocity = other.GetVelocitySampleForTick(currentTick);
+                float attackerIntentSpeed = GetIntentApproachSpeed(other, otherToSelf, otherVelocity);
                 float relativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(otherVelocity - selfVelocity, otherToSelf));
+                relativeClosingSpeed = Mathf.Max(relativeClosingSpeed, attackerIntentSpeed);
                 if (relativeClosingSpeed < minClosingSpeed)
                 {
                     continue;
@@ -889,8 +891,8 @@ namespace Sumo
                     continue;
                 }
 
-                float attackerForwardSpeed = Mathf.Max(0f, Vector3.Dot(otherVelocity, otherToSelf));
-                attackerForwardSpeed = Mathf.Max(attackerForwardSpeed, GetIntentApproachSpeed(other, otherToSelf, otherVelocity));
+                float attackerForwardSpeed = ApplyClassCombatSpeedMultiplier(other, Mathf.Max(0f, Vector3.Dot(otherVelocity, otherToSelf)));
+                attackerForwardSpeed = Mathf.Max(attackerForwardSpeed, attackerIntentSpeed);
                 if (attackerForwardSpeed <= 0.0001f)
                 {
                     continue;
@@ -2595,7 +2597,10 @@ namespace Sumo
                     SumoImpactTier.Unknown,
                     false,
                     out _);
-                float newShoveForceMultiplier = SumoImpactResolver.ResolveTierShoveMultiplier(newAttacker.physicsConfig, newTier);
+                float newShoveForceMultiplier = ResolveClassAdjustedShoveForceMultiplier(
+                    newAttacker,
+                    newVictim,
+                    SumoImpactResolver.ResolveTierShoveMultiplier(newAttacker.physicsConfig, newTier));
 
                 RetargetRamAttacker(ref pairState, newAttacker, newVictim, newDirection, currentTick, newShoveForceMultiplier);
                 attacker = newAttacker;
@@ -2906,8 +2911,10 @@ namespace Sumo
 
             int attackerKey = GetControllerKey(attacker);
             float entryForwardSpeedPhysical = attacker == first ? firstEntryApproachSpeed : secondEntryApproachSpeed;
-            entryForwardSpeedPhysical = SanitizeNonNegativeFinite(entryForwardSpeedPhysical);
-            float currentForwardSpeedPhysical = GetPhysicalApproachSpeed(attackerVelocity, attackerToVictim);
+            entryForwardSpeedPhysical = ApplyClassCombatSpeedMultiplier(attacker, entryForwardSpeedPhysical);
+            float currentForwardSpeedPhysical = ApplyClassCombatSpeedMultiplier(
+                attacker,
+                GetPhysicalApproachSpeed(attackerVelocity, attackerToVictim));
             float intentForwardSpeed = GetIntentApproachSpeed(attacker, attackerToVictim, attackerVelocity);
             float planarPhysicalSpeed = SanitizeNonNegativeFinite(GetPlanarPhysicalSpeed(attackerVelocity));
             float attackerPressure = attacker == first ? firstPressure : secondPressure;
@@ -2918,6 +2925,10 @@ namespace Sumo
                 attacker.physicsConfig,
                 entryForwardSpeedPhysical,
                 currentForwardSpeedPhysical);
+            if (HasClassPushSpeedFloor(attacker))
+            {
+                attackerForwardSpeed = Mathf.Max(attackerForwardSpeed, intentForwardSpeed);
+            }
 
             float relativeClosingSpeed = pairState.EnterRelativeClosingSpeed;
             float currentRelativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, attackerToVictim));
@@ -2944,7 +2955,10 @@ namespace Sumo
 
             pairState.LastTierAttackerRef = attackerKey;
             pairState.LastResolvedImpactTier = selectedTier;
-            float shoveForceMultiplier = SumoImpactResolver.ResolveTierShoveMultiplier(attacker.physicsConfig, selectedTier);
+            float shoveForceMultiplier = ResolveClassAdjustedShoveForceMultiplier(
+                attacker,
+                victim,
+                SumoImpactResolver.ResolveTierShoveMultiplier(attacker.physicsConfig, selectedTier));
             pairState.ShoveForceMultiplier = shoveForceMultiplier;
 
             float impactActivationMinSpeed = attacker.physicsConfig != null
@@ -4353,7 +4367,7 @@ namespace Sumo
             Vector3 sourceVelocity,
             Vector3 towardDirection)
         {
-            float velocityApproach = Mathf.Max(0f, Vector3.Dot(sourceVelocity, towardDirection));
+            float velocityApproach = ApplyClassCombatSpeedMultiplier(source, Mathf.Max(0f, Vector3.Dot(sourceVelocity, towardDirection)));
             float intentApproach = GetIntentApproachSpeed(source, towardDirection, sourceVelocity);
             return Mathf.Max(velocityApproach, intentApproach);
         }
@@ -4372,6 +4386,33 @@ namespace Sumo
         {
             Vector3 planarVelocity = new Vector3(velocity.x, 0f, velocity.z);
             return planarVelocity.magnitude;
+        }
+
+        private static float ApplyClassCombatSpeedMultiplier(SumoCollisionController source, float speed)
+        {
+            float sanitizedSpeed = SanitizeNonNegativeFinite(speed);
+            if (sanitizedSpeed <= 0.0001f || source == null || source.ballController == null)
+            {
+                return sanitizedSpeed;
+            }
+
+            float combatMultiplier = Mathf.Max(1f, source.ballController.ClassCombatSpeedMultiplier);
+            float adjustedSpeed = sanitizedSpeed * combatMultiplier;
+            float floorShare = Mathf.Clamp01(source.ballController.ClassPushSpeedFloorShare);
+            if (floorShare > 0f)
+            {
+                float normalReferenceSpeed = GetAttackerTierReferenceTopSpeed(source) * combatMultiplier;
+                adjustedSpeed = Mathf.Max(adjustedSpeed, normalReferenceSpeed * floorShare);
+            }
+
+            return adjustedSpeed;
+        }
+
+        private static bool HasClassPushSpeedFloor(SumoCollisionController source)
+        {
+            return source != null
+                && source.ballController != null
+                && source.ballController.ClassPushSpeedFloorShare > 0.0001f;
         }
 
         private static float SanitizeNonNegativeFinite(float value)
@@ -4546,6 +4587,26 @@ namespace Sumo
             return SumoImpactResolver.ResolveShoveForceMultiplier(multiplier);
         }
 
+        private static float ResolveClassAdjustedShoveForceMultiplier(
+            SumoCollisionController attacker,
+            SumoCollisionController victim,
+            float baseMultiplier)
+        {
+            float multiplier = ResolveAppliedShoveForceMultiplier(baseMultiplier);
+            if (attacker != null && attacker.ballController != null)
+            {
+                multiplier *= attacker.ballController.ClassOutgoingPushMultiplier;
+                multiplier = Mathf.Max(multiplier, attacker.ballController.ClassShoveForceFloor);
+            }
+
+            if (victim != null && victim.ballController != null)
+            {
+                multiplier *= victim.ballController.ClassIncomingPushMultiplier;
+            }
+
+            return ResolveAppliedShoveForceMultiplier(multiplier);
+        }
+
         private static float GetStateShoveForceMultiplier(in SumoRamState pairState)
         {
             return ResolveAppliedShoveForceMultiplier(pairState.ShoveForceMultiplier);
@@ -4680,7 +4741,7 @@ namespace Sumo
                 return 0f;
             }
 
-            return planarSpeed * Mathf.Clamp01(directionDot);
+            return ApplyClassCombatSpeedMultiplier(source, planarSpeed * Mathf.Clamp01(directionDot));
         }
 
         private void LogTierCheck(

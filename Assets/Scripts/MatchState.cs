@@ -10,6 +10,9 @@ namespace Sumo.Gameplay
         EliminateOutsideZone = 5,
         NextZone = 6,
         RoundFinished = 7,
-        ResetRound = 8
+        Scoreboard = 8,
+        ResetRound = 9,
+        MatchFinished = 10,
+        ClassSelection = 11
     }
 }

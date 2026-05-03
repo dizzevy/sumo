@@ -8317,7 +8317,7 @@ MonoBehaviour:
   npcPrefab:
     RawGuidValue: 22d677527b0d95744b83e61b363d71c8
   minimumPlayersToStart: 2
-  maximumPlayersPerMatch: 10
+  maximumPlayersPerMatch: 8
   waitingForMorePlayersSeconds: 30
   closeSessionForLateJoinAfterRoundLock: 1
   spawnNpcsAtRoundStart: 1

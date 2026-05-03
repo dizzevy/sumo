@@ -10,6 +10,8 @@ namespace Sumo.Gameplay
     [RequireComponent(typeof(NetworkObject))]
     public sealed class MatchRoundManager : NetworkBehaviour
     {
+        public const int ScoreCapacity = 20;
+
         [Header("References")]
         [SerializeField] private PreRoundBoxSpawner preRoundBoxSpawner;
         [SerializeField] private DropFloorController[] dropFloorControllers;
@@ -19,9 +21,14 @@ namespace Sumo.Gameplay
 
         [Header("Match Rules")]
         [SerializeField] private int minimumPlayersToStart = 2;
-        [SerializeField] private int maximumPlayersPerMatch = 10;
+        [SerializeField] private int maximumPlayersPerMatch = 8;
         [SerializeField] private float waitingForMorePlayersSeconds = 30f;
         [SerializeField] private bool closeSessionForLateJoinAfterRoundLock = true;
+        [SerializeField] private bool startFirstRoundImmediatelyAfterMatchmaking = true;
+        [SerializeField] private int winsToFinishMatch = 3;
+        [SerializeField] private float scoreboardDisplaySeconds = 4f;
+        [SerializeField] private float finalScoreDisplaySeconds = 5f;
+        [SerializeField] private bool shutdownServerAfterFinalScore = true;
 
         [Header("NPC Fill")]
         [SerializeField] private bool spawnNpcsAtRoundStart = true;
@@ -31,6 +38,7 @@ namespace Sumo.Gameplay
 
         [Header("Phase Durations (seconds)")]
         [SerializeField] private float preRoundBoxDelay = 0.3f;
+        [SerializeField] private float classSelectionSeconds = 20f;
         [SerializeField] private float countdownSeconds = 5f;
         [SerializeField] private float dropDelaySeconds = 1f;
         [SerializeField] private float safeZoneDurationSeconds = 30f;
@@ -45,16 +53,28 @@ namespace Sumo.Gameplay
         [Networked] public int AlivePlayersInRound { get; private set; }
         [Networked] public int CurrentZoneStep { get; private set; }
         [Networked] public float CurrentZoneRadius { get; private set; }
+        [Networked] public NetworkBool ClassAbilitiesUnlocked { get; private set; }
         [Networked] public int WinnerPlayerRawEncoded { get; private set; }
         [Networked] public NetworkBool AcceptingPlayers { get; private set; }
         [Networked] public TickTimer WaitingForMorePlayersTimer { get; private set; }
+        [Networked] public NetworkBool MatchmakingStartConfirmed { get; private set; }
+        [Networked] public int ConfirmedHumanPlayersAtStart { get; private set; }
+        [Networked] public int MatchWinTarget { get; private set; }
+        [Networked] public int ScoreParticipantCount { get; private set; }
+        [Networked] public int MatchWinnerRawEncoded { get; private set; }
+        [Networked] public int LockedNpcCount { get; private set; }
+        [Networked] public NetworkBool MatchScoreInitialized { get; private set; }
+        [Networked, Capacity(ScoreCapacity)] public NetworkArray<int> ScoreParticipantRawEncoded => default;
+        [Networked, Capacity(ScoreCapacity)] public NetworkArray<int> ScoreParticipantWins => default;
 
-        public bool IsAcceptingPlayers => AcceptingPlayers;
+        public bool IsNetworkSpawned { get; private set; }
+        public bool IsAcceptingPlayers => IsNetworkSpawned && AcceptingPlayers;
         public int MinimumPlayersToStart => minimumPlayersToStart;
         public int MaximumPlayersPerMatch => Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
-        public float RemainingPhaseTime => Runner == null ? 0f : (StateTimer.RemainingTime(Runner) ?? 0f);
-        public float WaitingForMorePlayersRemainingTime => Runner == null ? 0f : (WaitingForMorePlayersTimer.RemainingTime(Runner) ?? 0f);
-        public bool IsWaitingForMorePlayersCountdownActive => Runner != null && !WaitingForMorePlayersTimer.ExpiredOrNotRunning(Runner);
+        public bool ShouldReturnToMainMenuAfterMatch => shutdownServerAfterFinalScore;
+        public float RemainingPhaseTime => IsNetworkSpawned && Runner != null ? (StateTimer.RemainingTime(Runner) ?? 0f) : 0f;
+        public float WaitingForMorePlayersRemainingTime => IsNetworkSpawned && Runner != null ? (WaitingForMorePlayersTimer.RemainingTime(Runner) ?? 0f) : 0f;
+        public bool IsWaitingForMorePlayersCountdownActive => IsNetworkSpawned && Runner != null && !WaitingForMorePlayersTimer.ExpiredOrNotRunning(Runner);
 
         public int LocalEliminationNotificationSequence => _localEliminationNotificationSequence;
         public int LastNotifiedEliminatedPlayerRawEncoded => _lastNotifiedEliminatedPlayerRawEncoded;
@@ -106,6 +126,7 @@ namespace Sumo.Gameplay
 
         public override void Spawned()
         {
+            IsNetworkSpawned = true;
             EnsureReferences();
 
             if (!HasStateAuthority)
@@ -117,12 +138,38 @@ namespace Sumo.Gameplay
             maximumPlayersPerMatch = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
             waitingForMorePlayersSeconds = Mathf.Max(0f, waitingForMorePlayersSeconds);
             WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
+            MatchWinnerRawEncoded = PlayerRef.None.RawEncoded;
+            MatchWinTarget = Mathf.Max(1, winsToFinishMatch);
+            ScoreParticipantCount = 0;
+            LockedNpcCount = -1;
+            MatchScoreInitialized = false;
+            MatchmakingStartConfirmed = false;
+            ConfirmedHumanPlayersAtStart = 0;
             AlivePlayersInRound = 0;
             CurrentZoneStep = 0;
             CurrentZoneRadius = 0f;
+            ClassAbilitiesUnlocked = false;
             RoundIndex = Mathf.Max(0, RoundIndex);
+            ClearScoreArrays();
             ResetWaitingForMorePlayersCountdown();
             EnterWaitingForPlayers();
+        }
+
+        public override void Despawned(NetworkRunner runner, bool hasState)
+        {
+            IsNetworkSpawned = false;
+        }
+
+        public bool TryGetState(out MatchState state)
+        {
+            if (!IsNetworkSpawned)
+            {
+                state = MatchState.WaitingForPlayers;
+                return false;
+            }
+
+            state = State;
+            return true;
         }
 
         private void Update()
@@ -157,8 +204,11 @@ namespace Sumo.Gameplay
             RefreshPlayerStates();
 
             bool activeRoundState = State != MatchState.WaitingForPlayers
+                                    && State != MatchState.ClassSelection
                                     && State != MatchState.RoundFinished
-                                    && State != MatchState.ResetRound;
+                                    && State != MatchState.Scoreboard
+                                    && State != MatchState.ResetRound
+                                    && State != MatchState.MatchFinished;
 
             if (activeRoundState && CountRoundParticipants() > 0 && AlivePlayersInRound <= 1)
             {
@@ -176,6 +226,10 @@ namespace Sumo.Gameplay
             {
                 case MatchState.WaitingForPlayers:
                     TickWaitingForPlayers();
+                    break;
+
+                case MatchState.ClassSelection:
+                    TickClassSelection();
                     break;
 
                 case MatchState.PreRoundBox:
@@ -232,6 +286,13 @@ namespace Sumo.Gameplay
                 case MatchState.RoundFinished:
                     if (IsCurrentTimerExpired())
                     {
+                        EnterState(MatchState.Scoreboard, scoreboardDisplaySeconds);
+                    }
+                    break;
+
+                case MatchState.Scoreboard:
+                    if (IsCurrentTimerExpired())
+                    {
                         EnterState(MatchState.ResetRound, resetRoundDelay);
                     }
                     break;
@@ -247,6 +308,13 @@ namespace Sumo.Gameplay
                         {
                             EnterWaitingForPlayers();
                         }
+                    }
+                    break;
+
+                case MatchState.MatchFinished:
+                    if (IsCurrentTimerExpired())
+                    {
+                        ShutdownFinishedMatchIfNeeded();
                     }
                     break;
 
@@ -272,7 +340,7 @@ namespace Sumo.Gameplay
             CurrentZoneRadius = 0f;
             WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
 
-            if (!CanStartRoundNow())
+            if (!CanEnterClassSelection())
             {
                 ResetWaitingForMorePlayersCountdown();
                 return;
@@ -284,14 +352,14 @@ namespace Sumo.Gameplay
             if (activeCount >= maxPlayers)
             {
                 ResetWaitingForMorePlayersCountdown();
-                StartNewRound();
+                EnterClassSelection();
                 return;
             }
 
             if (waitingForMorePlayersSeconds <= 0.001f)
             {
                 ResetWaitingForMorePlayersCountdown();
-                StartNewRound();
+                EnterClassSelection();
                 return;
             }
 
@@ -305,8 +373,33 @@ namespace Sumo.Gameplay
             if (WaitingForMorePlayersTimer.ExpiredOrNotRunning(Runner))
             {
                 ResetWaitingForMorePlayersCountdown();
-                StartNewRound();
+                EnterClassSelection();
             }
+        }
+
+        private void TickClassSelection()
+        {
+            SetAdmissionOpen(false);
+            SetAllDropFloorsClosed(true);
+
+            if (safeZoneManager != null)
+            {
+                safeZoneManager.ServerHideCurrentZone();
+            }
+
+            if (!CanEnterClassSelection())
+            {
+                EnterWaitingForPlayers();
+                return;
+            }
+
+            if (!AreAllActivePlayersClassReady() && !IsCurrentTimerExpired())
+            {
+                return;
+            }
+
+            AutoConfirmPendingClassSelections();
+            StartNewRound();
         }
 
         private void StartNewRound()
@@ -319,6 +412,7 @@ namespace Sumo.Gameplay
                 return;
             }
 
+            EnsureMatchScoreInitialized(_roundRoster.Count);
             DespawnRuntimeNpcs();
 
             if (resetNpcMovementOnRoundStart)
@@ -328,6 +422,8 @@ namespace Sumo.Gameplay
 
             RoundIndex = Mathf.Max(1, RoundIndex + 1);
             WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
+            MatchWinnerRawEncoded = PlayerRef.None.RawEncoded;
+            ClassAbilitiesUnlocked = false;
             _eliminationOrderCounter = 0;
 
             SetAdmissionOpen(false);
@@ -351,7 +447,7 @@ namespace Sumo.Gameplay
                 Quaternion spawnRot;
                 GetRoundSpawnPose(i, out spawnPos, out spawnRot);
 
-                state.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot);
+                state.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot, player.RawEncoded);
             }
 
             SpawnRuntimeNpcsForRound(_roundRoster.Count);
@@ -380,6 +476,11 @@ namespace Sumo.Gameplay
 
             CurrentZoneStep = safeZoneManager.CurrentZoneStep;
             CurrentZoneRadius = safeZoneManager.GetCurrentRadiusOrDefault();
+            if (isFirstZone)
+            {
+                ClassAbilitiesUnlocked = true;
+            }
+
             EnterState(MatchState.SafeZonePhase, safeZoneDurationSeconds);
         }
 
@@ -466,15 +567,24 @@ namespace Sumo.Gameplay
             }
 
             SetAllDropFloorsClosed(true);
+            ClassAbilitiesUnlocked = false;
 
             AlivePlayersInRound = CountAlivePlayersInRoster();
             WinnerPlayerRawEncoded = ResolveWinnerRawEncoded();
             if (WinnerPlayerRawEncoded != PlayerRef.None.RawEncoded)
             {
+                AddMatchWin(WinnerPlayerRawEncoded);
                 RPC_NotifyRoundWinner(WinnerPlayerRawEncoded);
             }
 
-            EnterState(MatchState.RoundFinished, roundFinishedDelay);
+            if (HasMatchWinner())
+            {
+                EnterState(MatchState.MatchFinished, finalScoreDisplaySeconds);
+            }
+            else
+            {
+                EnterState(MatchState.Scoreboard, scoreboardDisplaySeconds);
+            }
         }
 
         private void EnterWaitingForPlayers()
@@ -494,10 +604,43 @@ namespace Sumo.Gameplay
             AlivePlayersInRound = 0;
             CurrentZoneStep = 0;
             CurrentZoneRadius = 0f;
+            ClassAbilitiesUnlocked = false;
             WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
 
             SetAdmissionOpen(true);
             EnterState(MatchState.WaitingForPlayers, 0f);
+        }
+
+        private void EnterClassSelection()
+        {
+            _roundRoster.Clear();
+            _eliminationOrderCounter = 0;
+            ResetWaitingForMorePlayersCountdown();
+
+            if (safeZoneManager != null)
+            {
+                safeZoneManager.ServerHideCurrentZone();
+            }
+
+            SetAllDropFloorsClosed(true);
+
+            AlivePlayersInRound = 0;
+            CurrentZoneStep = 0;
+            CurrentZoneRadius = 0f;
+            ClassAbilitiesUnlocked = false;
+            WinnerPlayerRawEncoded = PlayerRef.None.RawEncoded;
+
+            for (int i = 0; i < _activePlayersScratch.Count; i++)
+            {
+                PlayerRef player = _activePlayersScratch[i];
+                if (_playerStates.TryGetValue(player, out PlayerRoundState state) && state != null)
+                {
+                    state.ServerBeginClassSelection();
+                }
+            }
+
+            SetAdmissionOpen(false);
+            EnterState(MatchState.ClassSelection, classSelectionSeconds);
         }
 
         private void EnterState(MatchState newState, float durationSeconds)
@@ -519,6 +662,17 @@ namespace Sumo.Gameplay
             }
 
             UpdateSessionProperties();
+        }
+
+        private void ShutdownFinishedMatchIfNeeded()
+        {
+            if (!shutdownServerAfterFinalScore || Runner == null)
+            {
+                return;
+            }
+
+            SetAdmissionOpen(false);
+            Runner.Shutdown(false, ShutdownReason.Ok, false);
         }
 
         private bool IsCurrentTimerExpired()
@@ -674,6 +828,168 @@ namespace Sumo.Gameplay
             return _roundRoster.Count + _roundNpcStates.Count;
         }
 
+        public void ServerConfirmMatchmakingStart(int confirmedHumanPlayers)
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            MatchmakingStartConfirmed = true;
+            ConfirmedHumanPlayersAtStart = Mathf.Max(0, confirmedHumanPlayers);
+        }
+
+        public int GetScoreParticipantRawEncoded(int slot)
+        {
+            if (slot < 0 || slot >= ScoreParticipantCount || slot >= ScoreCapacity)
+            {
+                return PlayerRef.None.RawEncoded;
+            }
+
+            return ScoreParticipantRawEncoded.Get(slot);
+        }
+
+        public int GetScoreParticipantWins(int slot)
+        {
+            if (slot < 0 || slot >= ScoreParticipantCount || slot >= ScoreCapacity)
+            {
+                return 0;
+            }
+
+            return ScoreParticipantWins.Get(slot);
+        }
+
+        public string FormatParticipantLabel(PlayerRoundState state)
+        {
+            if (state == null)
+            {
+                return "Player";
+            }
+
+            int rawEncoded = state.ParticipantRawEncoded;
+            if (rawEncoded == PlayerRef.None.RawEncoded && state.Object != null && state.Object.InputAuthority != PlayerRef.None)
+            {
+                rawEncoded = state.Object.InputAuthority.RawEncoded;
+            }
+
+            return FormatParticipantLabel(rawEncoded);
+        }
+
+        public string FormatParticipantLabel(int rawEncoded)
+        {
+            for (int i = 0; i < ScoreParticipantCount && i < ScoreCapacity; i++)
+            {
+                int participant = ScoreParticipantRawEncoded.Get(i);
+                if (participant == rawEncoded)
+                {
+                    return FormatScoreSlotLabel(i, participant);
+                }
+            }
+
+            if (rawEncoded < 0)
+            {
+                return $"Bot {Mathf.Abs(rawEncoded)}";
+            }
+
+            if (rawEncoded == PlayerRef.None.RawEncoded)
+            {
+                return "Player";
+            }
+
+            return $"Player {rawEncoded}";
+        }
+
+        private void EnsureMatchScoreInitialized(int humanPlayerCount)
+        {
+            MatchWinTarget = Mathf.Max(1, winsToFinishMatch);
+
+            if (MatchScoreInitialized)
+            {
+                return;
+            }
+
+            LockedNpcCount = spawnNpcsAtRoundStart ? ResolveNpcCountForRound(humanPlayerCount) : 0;
+            ScoreParticipantCount = 0;
+            MatchWinnerRawEncoded = PlayerRef.None.RawEncoded;
+            ClearScoreArrays();
+
+            for (int i = 0; i < _roundRoster.Count && ScoreParticipantCount < ScoreCapacity; i++)
+            {
+                ScoreParticipantRawEncoded.Set(ScoreParticipantCount, _roundRoster[i].RawEncoded);
+                ScoreParticipantWins.Set(ScoreParticipantCount, 0);
+                ScoreParticipantCount++;
+            }
+
+            int npcCount = Mathf.Clamp(LockedNpcCount, 0, ScoreCapacity - ScoreParticipantCount);
+            LockedNpcCount = npcCount;
+            for (int i = 0; i < npcCount && ScoreParticipantCount < ScoreCapacity; i++)
+            {
+                ScoreParticipantRawEncoded.Set(ScoreParticipantCount, EncodeNpcParticipantRawEncoded(i));
+                ScoreParticipantWins.Set(ScoreParticipantCount, 0);
+                ScoreParticipantCount++;
+            }
+
+            MatchScoreInitialized = true;
+        }
+
+        private void ClearScoreArrays()
+        {
+            for (int i = 0; i < ScoreCapacity; i++)
+            {
+                ScoreParticipantRawEncoded.Set(i, PlayerRef.None.RawEncoded);
+                ScoreParticipantWins.Set(i, 0);
+            }
+        }
+
+        private void AddMatchWin(int winnerRawEncoded)
+        {
+            for (int i = 0; i < ScoreParticipantCount && i < ScoreCapacity; i++)
+            {
+                if (ScoreParticipantRawEncoded.Get(i) != winnerRawEncoded)
+                {
+                    continue;
+                }
+
+                int wins = Mathf.Max(0, ScoreParticipantWins.Get(i)) + 1;
+                ScoreParticipantWins.Set(i, wins);
+                return;
+            }
+        }
+
+        private bool HasMatchWinner()
+        {
+            int target = Mathf.Max(1, MatchWinTarget);
+            for (int i = 0; i < ScoreParticipantCount && i < ScoreCapacity; i++)
+            {
+                if (ScoreParticipantWins.Get(i) >= target)
+                {
+                    MatchWinnerRawEncoded = ScoreParticipantRawEncoded.Get(i);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private string FormatScoreSlotLabel(int slot, int rawEncoded)
+        {
+            if (rawEncoded < 0)
+            {
+                return $"Bot {Mathf.Abs(rawEncoded)}";
+            }
+
+            int humanOrdinal = 0;
+            for (int i = 0; i <= slot && i < ScoreParticipantCount && i < ScoreCapacity; i++)
+            {
+                if (ScoreParticipantRawEncoded.Get(i) > 0)
+                {
+                    humanOrdinal++;
+                }
+            }
+
+            return $"Player {Mathf.Max(1, humanOrdinal)}";
+        }
+
         private void SpawnRuntimeNpcsForRound(int humanPlayerCount)
         {
             if (!spawnNpcsAtRoundStart)
@@ -720,6 +1036,11 @@ namespace Sumo.Gameplay
 
         private int ResolveNpcCountForRound(int humanPlayerCount)
         {
+            if (MatchScoreInitialized && LockedNpcCount >= 0)
+            {
+                return Mathf.Max(0, LockedNpcCount);
+            }
+
             int maxBalls = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
             int freeSlots = Mathf.Max(0, maxBalls - Mathf.Max(0, humanPlayerCount));
             if (freeSlots <= 0)
@@ -759,7 +1080,7 @@ namespace Sumo.Gameplay
             }
 
             npcState.ServerForceClientReady(true);
-            npcState.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot);
+            npcState.ServerPrepareForRound(RoundIndex, spawnPos, spawnRot, EncodeNpcParticipantRawEncoded(localIndex));
             _roundNpcStates.Add(npcState);
             return true;
         }
@@ -853,6 +1174,58 @@ namespace Sumo.Gameplay
             }
 
             return true;
+        }
+
+        private bool CanEnterClassSelection()
+        {
+            if (_activePlayersScratch.Count < minimumPlayersToStart)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _activePlayersScratch.Count; i++)
+            {
+                PlayerRef player = _activePlayersScratch[i];
+                if (!_playerStates.TryGetValue(player, out PlayerRoundState state) || state == null)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool AreAllActivePlayersClassReady()
+        {
+            if (_activePlayersScratch.Count < minimumPlayersToStart)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _activePlayersScratch.Count; i++)
+            {
+                PlayerRef player = _activePlayersScratch[i];
+                if (!_playerStates.TryGetValue(player, out PlayerRoundState state) || state == null || !state.IsClientReady)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void AutoConfirmPendingClassSelections()
+        {
+            for (int i = 0; i < _activePlayersScratch.Count; i++)
+            {
+                PlayerRef player = _activePlayersScratch[i];
+                if (!_playerStates.TryGetValue(player, out PlayerRoundState state) || state == null || state.IsClientReady)
+                {
+                    continue;
+                }
+
+                state.ServerAutoConfirmClassSelection();
+            }
         }
 
         private int ResolveWinnerRawEncoded()
@@ -959,6 +1332,11 @@ namespace Sumo.Gameplay
             {
                 sessionInfo.IsOpen = isOpen;
             }
+
+            if (sessionInfo.IsVisible != isOpen)
+            {
+                sessionInfo.IsVisible = isOpen;
+            }
         }
 
         private void UpdateSessionProperties()
@@ -974,14 +1352,17 @@ namespace Sumo.Gameplay
                 return;
             }
 
-            Dictionary<string, SessionProperty> props = new Dictionary<string, SessionProperty>(6)
+            Dictionary<string, SessionProperty> props = new Dictionary<string, SessionProperty>(10)
             {
                 ["matchState"] = (int)State,
                 ["round"] = RoundIndex,
                 ["zoneStep"] = CurrentZoneStep,
                 ["accepting"] = AcceptingPlayers ? 1 : 0,
                 ["minPlayers"] = minimumPlayersToStart,
-                ["maxPlayers"] = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch)
+                ["maxPlayers"] = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch),
+                ["winTarget"] = Mathf.Max(1, MatchWinTarget),
+                ["lockedNpcCount"] = Mathf.Max(0, LockedNpcCount),
+                ["matchWinner"] = MatchWinnerRawEncoded
             };
 
             sessionInfo.UpdateCustomProperties(props);
@@ -1060,14 +1441,18 @@ namespace Sumo.Gameplay
             minimumPlayersToStart = Mathf.Max(2, minimumPlayersToStart);
             maximumPlayersPerMatch = Mathf.Max(minimumPlayersToStart, maximumPlayersPerMatch);
             minimumNpcsPerRound = Mathf.Max(1, minimumNpcsPerRound);
+            winsToFinishMatch = Mathf.Max(1, winsToFinishMatch);
             waitingForMorePlayersSeconds = Mathf.Max(0f, waitingForMorePlayersSeconds);
             preRoundBoxDelay = Mathf.Max(0f, preRoundBoxDelay);
+            classSelectionSeconds = Mathf.Max(1f, classSelectionSeconds);
             countdownSeconds = Mathf.Max(0f, countdownSeconds);
             dropDelaySeconds = Mathf.Max(0f, dropDelaySeconds);
             safeZoneDurationSeconds = Mathf.Max(1f, safeZoneDurationSeconds);
             eliminationResolveDelay = Mathf.Max(0f, eliminationResolveDelay);
             nextZoneTransitionDelay = Mathf.Max(0f, nextZoneTransitionDelay);
             roundFinishedDelay = Mathf.Max(0f, roundFinishedDelay);
+            scoreboardDisplaySeconds = Mathf.Max(0.5f, scoreboardDisplaySeconds);
+            finalScoreDisplaySeconds = Mathf.Max(0.5f, finalScoreDisplaySeconds);
             resetRoundDelay = Mathf.Max(0f, resetRoundDelay);
         }
 

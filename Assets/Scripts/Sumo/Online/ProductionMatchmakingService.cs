@@ -74,7 +74,15 @@ namespace Sumo.Online
                 TicketId = response.ticketId,
                 PlayerId = string.IsNullOrWhiteSpace(response.playerId) ? _settings.PlayerId : response.playerId,
                 Status = ParseStatus(response.status, MatchTicketStatus.Searching),
-                CreatedAtUtc = ParseDate(response.createdAt)
+                CreatedAtUtc = ParseDate(response.createdAt),
+                PlayersFound = Mathf.Max(0, response.playersFound),
+                RequiredPlayers = Mathf.Max(0, response.requiredPlayers),
+                MaxPlayers = Mathf.Clamp(
+                    response.maxPlayers > 0 ? response.maxPlayers : _settings.DefaultMaxPlayers,
+                    2,
+                    BootstrapConfig.TargetMaxPlayers),
+                CountdownRemainingSeconds = Mathf.Max(0f, response.countdownRemaining),
+                CountdownActive = response.countdownActive
             };
         }
 
@@ -127,6 +135,7 @@ namespace Sumo.Online
                 }
 
                 ticket.Status = ParseStatus(queueResponse.status, ticket.Status);
+                ApplyQueueProgress(ticket, queueResponse);
 
                 if (ticket.Status == MatchTicketStatus.Cancelled)
                 {
@@ -294,6 +303,32 @@ namespace Sumo.Online
             return DateTime.UtcNow;
         }
 
+        private static void ApplyQueueProgress(MatchTicket ticket, QueueStatusResponseDto queueResponse)
+        {
+            if (ticket == null || queueResponse == null)
+            {
+                return;
+            }
+
+            if (queueResponse.playersFound >= 0)
+            {
+                ticket.PlayersFound = queueResponse.playersFound;
+            }
+
+            if (queueResponse.requiredPlayers > 0)
+            {
+                ticket.RequiredPlayers = queueResponse.requiredPlayers;
+            }
+
+            if (queueResponse.maxPlayers > 0)
+            {
+                ticket.MaxPlayers = Mathf.Clamp(queueResponse.maxPlayers, 2, BootstrapConfig.TargetMaxPlayers);
+            }
+
+            ticket.CountdownRemainingSeconds = Mathf.Max(0f, queueResponse.countdownRemaining);
+            ticket.CountdownActive = queueResponse.countdownActive || ticket.CountdownRemainingSeconds > 0.001f;
+        }
+
         private static T Deserialize<T>(string json) where T : class
         {
             if (string.IsNullOrWhiteSpace(json))
@@ -326,6 +361,11 @@ namespace Sumo.Online
             public string playerId;
             public string status;
             public string createdAt;
+            public int playersFound;
+            public int requiredPlayers;
+            public int maxPlayers;
+            public float countdownRemaining;
+            public bool countdownActive;
         }
 
         [Serializable]
@@ -335,6 +375,11 @@ namespace Sumo.Online
             public string status;
             public string matchId;
             public string message;
+            public int playersFound;
+            public int requiredPlayers;
+            public int maxPlayers;
+            public float countdownRemaining;
+            public bool countdownActive;
         }
 
         [Serializable]

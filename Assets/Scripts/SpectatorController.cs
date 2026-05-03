@@ -240,6 +240,8 @@ namespace Sumo.Gameplay
                 }
             }
 
+            _aliveTargets.Sort(CompareTargets);
+
             if (_aliveTargets.Count == 0)
             {
                 _targetIndex = 0;
@@ -257,6 +259,50 @@ namespace Sumo.Gameplay
             }
 
             _targetIndex = Mathf.Clamp(_targetIndex, 0, _aliveTargets.Count - 1);
+        }
+
+        private static int CompareTargets(PlayerRoundState a, PlayerRoundState b)
+        {
+            if (ReferenceEquals(a, b))
+            {
+                return 0;
+            }
+
+            if (a == null)
+            {
+                return 1;
+            }
+
+            if (b == null)
+            {
+                return -1;
+            }
+
+            int participantCompare = GetTargetSortKey(a).CompareTo(GetTargetSortKey(b));
+            if (participantCompare != 0)
+            {
+                return participantCompare;
+            }
+
+            int aId = a.Object != null ? unchecked((int)a.Object.Id.Raw) : a.GetInstanceID();
+            int bId = b.Object != null ? unchecked((int)b.Object.Id.Raw) : b.GetInstanceID();
+            return aId.CompareTo(bId);
+        }
+
+        private static int GetTargetSortKey(PlayerRoundState state)
+        {
+            if (state == null)
+            {
+                return int.MaxValue;
+            }
+
+            int participant = state.ParticipantRawEncoded;
+            if (participant < 0)
+            {
+                return 1000 + Mathf.Abs(participant);
+            }
+
+            return participant;
         }
 
         private void EnsureSpectatorCamera()
@@ -368,14 +414,27 @@ namespace Sumo.Gameplay
         {
 #if ENABLE_INPUT_SYSTEM
             Keyboard keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.eKey.wasPressedThisFrame)
+            if (keyboard != null
+                && (keyboard.eKey.wasPressedThisFrame
+                    || keyboard.tabKey.wasPressedThisFrame
+                    || keyboard.rightArrowKey.wasPressedThisFrame
+                    || keyboard.rightBracketKey.wasPressedThisFrame))
+            {
+                return true;
+            }
+
+            Gamepad gamepad = Gamepad.current;
+            if (gamepad != null && gamepad.rightShoulder.wasPressedThisFrame)
             {
                 return true;
             }
 #endif
 
 #if ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.E))
+            if (Input.GetKeyDown(KeyCode.E)
+                || Input.GetKeyDown(KeyCode.Tab)
+                || Input.GetKeyDown(KeyCode.RightArrow)
+                || Input.GetKeyDown(KeyCode.RightBracket))
             {
                 return true;
             }
@@ -388,14 +447,25 @@ namespace Sumo.Gameplay
         {
 #if ENABLE_INPUT_SYSTEM
             Keyboard keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.qKey.wasPressedThisFrame)
+            if (keyboard != null
+                && (keyboard.qKey.wasPressedThisFrame
+                    || keyboard.leftArrowKey.wasPressedThisFrame
+                    || keyboard.leftBracketKey.wasPressedThisFrame))
+            {
+                return true;
+            }
+
+            Gamepad gamepad = Gamepad.current;
+            if (gamepad != null && gamepad.leftShoulder.wasPressedThisFrame)
             {
                 return true;
             }
 #endif
 
 #if ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.Q))
+            if (Input.GetKeyDown(KeyCode.Q)
+                || Input.GetKeyDown(KeyCode.LeftArrow)
+                || Input.GetKeyDown(KeyCode.LeftBracket))
             {
                 return true;
             }
@@ -487,18 +557,7 @@ namespace Sumo.Gameplay
             Keyboard keyboard = Keyboard.current;
             if (keyboard != null)
             {
-                float keyX = 0f;
                 float keyY = 0f;
-
-                if (keyboard.leftArrowKey.isPressed)
-                {
-                    keyX -= 1f;
-                }
-
-                if (keyboard.rightArrowKey.isPressed)
-                {
-                    keyX += 1f;
-                }
 
                 if (keyboard.upArrowKey.isPressed)
                 {
@@ -510,9 +569,9 @@ namespace Sumo.Gameplay
                     keyY -= 1f;
                 }
 
-                if (Mathf.Abs(keyX) > 0.01f || Mathf.Abs(keyY) > 0.01f)
+                if (Mathf.Abs(keyY) > 0.01f)
                 {
-                    delta += new Vector2(keyX, keyY) * keyboardLookSpeed * Time.unscaledDeltaTime;
+                    delta += new Vector2(0f, keyY) * keyboardLookSpeed * Time.unscaledDeltaTime;
                     hasModernInput = true;
                 }
             }
@@ -527,15 +586,6 @@ namespace Sumo.Gameplay
 
                 float keyX = 0f;
                 float keyY = 0f;
-                if (Input.GetKey(KeyCode.LeftArrow))
-                {
-                    keyX -= 1f;
-                }
-
-                if (Input.GetKey(KeyCode.RightArrow))
-                {
-                    keyX += 1f;
-                }
 
                 if (Input.GetKey(KeyCode.UpArrow))
                 {

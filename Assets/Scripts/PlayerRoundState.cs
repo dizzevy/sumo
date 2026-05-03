@@ -1,6 +1,7 @@
 using Fusion;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.UI;
 
 namespace Sumo.Gameplay
 {
@@ -32,12 +33,15 @@ namespace Sumo.Gameplay
         [Networked] public NetworkBool IsSpectator { get; private set; }
         [Networked] public int LastRoundIndex { get; private set; }
         [Networked] public int EliminationOrder { get; private set; }
+        [Networked] public int ParticipantRawEncoded { get; private set; }
+        [Networked] public int SelectedClassRaw { get; private set; }
         [Networked] private NetworkBool PendingSpectatorTransition { get; set; }
         [Networked] private TickTimer PendingSpectatorTransitionTimer { get; set; }
         [Networked] private Vector3 PendingSpectatorPosition { get; set; }
         [Networked] private Vector3 PendingSpectatorEulerAngles { get; set; }
 
         public bool IsAliveInRound => IsAlive && !IsSpectator;
+        public Sumo.SumoPlayerClass SelectedClass => Sumo.SumoPlayerClassCatalog.FromRaw(SelectedClassRaw);
 
         public Vector3 ZoneCheckPosition
         {
@@ -77,14 +81,17 @@ namespace Sumo.Gameplay
                 PendingSpectatorEulerAngles = Vector3.zero;
                 LastRoundIndex = 0;
                 IsClientReady = false;
+                ParticipantRawEncoded = PlayerRef.None.RawEncoded;
+                SelectedClassRaw = (int)Sumo.SumoPlayerClass.None;
             }
 
             if (Object != null && Object.HasInputAuthority)
             {
-                RPC_ReportClientReady();
                 EnsureLocalHudController();
+                EnsureClassSelectionUiController();
             }
 
+            EnsureNameLabelController();
             ApplyState(force: true);
         }
 
@@ -108,7 +115,7 @@ namespace Sumo.Gameplay
             FinalizePendingSpectatorTransition();
         }
 
-        public void ServerPrepareForRound(int roundIndex, Vector3 position, Quaternion rotation)
+        public void ServerPrepareForRound(int roundIndex, Vector3 position, Quaternion rotation, int participantRawEncoded = 0)
         {
             if (!HasStateAuthority)
             {
@@ -119,10 +126,21 @@ namespace Sumo.Gameplay
             EliminationOrder = 0;
             IsAlive = true;
             IsSpectator = false;
+            if (SelectedClassRaw == (int)Sumo.SumoPlayerClass.None)
+            {
+                SelectedClassRaw = (int)Sumo.SumoPlayerClassCatalog.DefaultClass;
+            }
+
+            ParticipantRawEncoded = participantRawEncoded;
             PendingSpectatorTransition = false;
             PendingSpectatorTransitionTimer = default;
             PendingSpectatorPosition = Vector3.zero;
             PendingSpectatorEulerAngles = Vector3.zero;
+            if (ballController != null)
+            {
+                ballController.ServerResetClassAbilityState();
+            }
+
             TeleportServer(position, rotation);
             ApplyState(force: true);
         }
@@ -182,10 +200,104 @@ namespace Sumo.Gameplay
             IsClientReady = value;
         }
 
+        public void ServerBeginClassSelection()
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            if (SelectedClassRaw == (int)Sumo.SumoPlayerClass.None)
+            {
+                SelectedClassRaw = (int)Sumo.SumoPlayerClassCatalog.DefaultClass;
+            }
+
+            IsClientReady = false;
+        }
+
+        public void ServerConfirmClassSelection(Sumo.SumoPlayerClass playerClass)
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            SelectedClassRaw = (int)Sumo.SumoPlayerClassCatalog.Sanitize(playerClass);
+            IsClientReady = true;
+        }
+
+        public void ServerPreviewClassSelection(Sumo.SumoPlayerClass playerClass)
+        {
+            if (!HasStateAuthority || IsClientReady)
+            {
+                return;
+            }
+
+            SelectedClassRaw = (int)Sumo.SumoPlayerClassCatalog.Sanitize(playerClass);
+        }
+
+        public void ServerAutoConfirmClassSelection()
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            ServerConfirmClassSelection(Sumo.SumoPlayerClassCatalog.FromRaw(SelectedClassRaw));
+        }
+
+        public void SubmitClassSelection(Sumo.SumoPlayerClass playerClass)
+        {
+            Sumo.SumoPlayerClass sanitizedClass = Sumo.SumoPlayerClassCatalog.Sanitize(playerClass);
+
+            if (HasStateAuthority)
+            {
+                ServerConfirmClassSelection(sanitizedClass);
+                return;
+            }
+
+            if (Object == null || !Object.HasInputAuthority)
+            {
+                return;
+            }
+
+            RPC_SubmitClassSelection((int)sanitizedClass);
+        }
+
+        public void PreviewClassSelection(Sumo.SumoPlayerClass playerClass)
+        {
+            Sumo.SumoPlayerClass sanitizedClass = Sumo.SumoPlayerClassCatalog.Sanitize(playerClass);
+
+            if (HasStateAuthority)
+            {
+                ServerPreviewClassSelection(sanitizedClass);
+                return;
+            }
+
+            if (Object == null || !Object.HasInputAuthority)
+            {
+                return;
+            }
+
+            RPC_PreviewClassSelection((int)sanitizedClass);
+        }
+
         [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
         private void RPC_ReportClientReady()
         {
             IsClientReady = true;
+        }
+
+        [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+        private void RPC_SubmitClassSelection(int rawClass)
+        {
+            ServerConfirmClassSelection(Sumo.SumoPlayerClassCatalog.FromRaw(rawClass));
+        }
+
+        [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority, Channel = RpcChannel.Reliable)]
+        private void RPC_PreviewClassSelection(int rawClass)
+        {
+            ServerPreviewClassSelection(Sumo.SumoPlayerClassCatalog.FromRaw(rawClass));
         }
 
         [Rpc(RpcSources.StateAuthority, RpcTargets.All, Channel = RpcChannel.Reliable)]
@@ -418,6 +530,24 @@ namespace Sumo.Gameplay
             }
         }
 
+        private void EnsureClassSelectionUiController()
+        {
+            ClassSelectionUiController existing = GetComponent<ClassSelectionUiController>();
+            if (existing == null)
+            {
+                gameObject.AddComponent<ClassSelectionUiController>();
+            }
+        }
+
+        private void EnsureNameLabelController()
+        {
+            PlayerNameLabelController existing = GetComponent<PlayerNameLabelController>();
+            if (existing == null)
+            {
+                gameObject.AddComponent<PlayerNameLabelController>();
+            }
+        }
+
         private Color ResolveDeathTint()
         {
             return deathVfxPrimaryColor;
@@ -436,6 +566,515 @@ namespace Sumo.Gameplay
             }
 
             return enableDeathVfx ? Mathf.Max(0f, deathVfxLifetime) : 0f;
+        }
+    }
+
+    [DisallowMultipleComponent]
+    internal sealed class ClassSelectionUiController : MonoBehaviour
+    {
+        [SerializeField] private NetworkObject networkObject;
+        [SerializeField] private PlayerRoundState playerRoundState;
+        [SerializeField] private MatchRoundManager matchRoundManager;
+
+        private Canvas _runtimeCanvas;
+        private GameObject _rootPanel;
+        private Image _previewBall;
+        private Text _timerText;
+        private Text _classNameText;
+        private Text _abilityNameText;
+        private Text _descriptionText;
+        private Text _statsText;
+        private Text _statusText;
+        private Button _leftButton;
+        private Button _rightButton;
+        private Button _confirmButton;
+        private int _selectedIndex;
+        private bool _selectionInitialized;
+        private bool _uiReady;
+
+        private static Sprite _circleSprite;
+
+        private void Awake()
+        {
+            CacheReferencesIfNeeded();
+        }
+
+        private void OnDestroy()
+        {
+            if (_runtimeCanvas != null)
+            {
+                Destroy(_runtimeCanvas.gameObject);
+            }
+        }
+
+        private void Update()
+        {
+            if (!IsLocalPlayer())
+            {
+                SetVisible(false);
+                _selectionInitialized = false;
+                return;
+            }
+
+            CacheReferencesIfNeeded();
+            ResolveManagerIfNeeded();
+
+            bool shouldShow = matchRoundManager != null
+                              && matchRoundManager.TryGetState(out MatchState state)
+                              && state == MatchState.ClassSelection;
+            if (!shouldShow)
+            {
+                SetVisible(false);
+                _selectionInitialized = false;
+                return;
+            }
+
+            EnsureUi();
+            if (!_uiReady)
+            {
+                return;
+            }
+
+            SetVisible(true);
+            InitializeSelectionIfNeeded();
+            HandleKeyboardInput();
+            RefreshStateTexts();
+        }
+
+        private void InitializeSelectionIfNeeded()
+        {
+            if (_selectionInitialized)
+            {
+                return;
+            }
+
+            Sumo.SumoPlayerClass selectedClass = playerRoundState != null
+                ? playerRoundState.SelectedClass
+                : Sumo.SumoPlayerClassCatalog.DefaultClass;
+            _selectedIndex = Sumo.SumoPlayerClassCatalog.GetIndex(selectedClass);
+            _selectionInitialized = true;
+            RefreshClassUi();
+            PublishSelectionPreview();
+        }
+
+        private void HandleKeyboardInput()
+        {
+            if (playerRoundState == null || playerRoundState.IsClientReady)
+            {
+                return;
+            }
+
+            if (Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.LeftArrow)
+                || Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.A))
+            {
+                CycleSelection(-1);
+            }
+            else if (Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.RightArrow)
+                     || Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.D))
+            {
+                CycleSelection(1);
+            }
+
+            if (Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.Return)
+                || Sumo.SumoNpcBallDriver.WasKeyPressedThisFrame(KeyCode.KeypadEnter))
+            {
+                ConfirmSelection();
+            }
+        }
+
+        private void CycleSelection(int direction)
+        {
+            if (playerRoundState != null && playerRoundState.IsClientReady)
+            {
+                return;
+            }
+
+            _selectedIndex += direction;
+            _selectedIndex = ((_selectedIndex % Sumo.SumoPlayerClassCatalog.Count) + Sumo.SumoPlayerClassCatalog.Count) % Sumo.SumoPlayerClassCatalog.Count;
+            RefreshClassUi();
+            PublishSelectionPreview();
+        }
+
+        private void ConfirmSelection()
+        {
+            if (playerRoundState == null || playerRoundState.IsClientReady)
+            {
+                return;
+            }
+
+            playerRoundState.SubmitClassSelection(Sumo.SumoPlayerClassCatalog.GetByIndex(_selectedIndex));
+            RefreshStateTexts();
+        }
+
+        private void RefreshClassUi()
+        {
+            Sumo.SumoPlayerClassDefinition definition = Sumo.SumoPlayerClassCatalog.GetDefinition(
+                Sumo.SumoPlayerClassCatalog.GetByIndex(_selectedIndex));
+
+            if (_previewBall != null)
+            {
+                _previewBall.color = definition.Color;
+            }
+
+            if (_classNameText != null)
+            {
+                _classNameText.text = definition.DisplayName;
+            }
+
+            if (_abilityNameText != null)
+            {
+                _abilityNameText.text = $"Ability: {definition.AbilityName}";
+            }
+
+            if (_descriptionText != null)
+            {
+                _descriptionText.text = definition.Description;
+            }
+
+            if (_statsText != null)
+            {
+                _statsText.text = BuildStatsTable(definition);
+            }
+        }
+
+        private void PublishSelectionPreview()
+        {
+            if (playerRoundState == null || playerRoundState.IsClientReady)
+            {
+                return;
+            }
+
+            playerRoundState.PreviewClassSelection(Sumo.SumoPlayerClassCatalog.GetByIndex(_selectedIndex));
+        }
+
+        private void RefreshStateTexts()
+        {
+            if (matchRoundManager != null
+                && matchRoundManager.TryGetState(out MatchState state)
+                && state == MatchState.ClassSelection
+                && _timerText != null)
+            {
+                int seconds = Mathf.Max(0, Mathf.CeilToInt(matchRoundManager.RemainingPhaseTime));
+                _timerText.text = $"Class selection: {seconds}s";
+            }
+
+            bool ready = playerRoundState != null && playerRoundState.IsClientReady;
+            if (_statusText != null)
+            {
+                _statusText.text = ready ? "Locked. Waiting for players..." : "Pick a class and lock it in.";
+            }
+
+            if (_leftButton != null)
+            {
+                _leftButton.interactable = !ready;
+            }
+
+            if (_rightButton != null)
+            {
+                _rightButton.interactable = !ready;
+            }
+
+            if (_confirmButton != null)
+            {
+                _confirmButton.interactable = !ready;
+            }
+        }
+
+        private bool IsLocalPlayer()
+        {
+            return networkObject != null
+                   && networkObject.Runner != null
+                   && networkObject.Runner.IsRunning
+                   && networkObject.HasInputAuthority;
+        }
+
+        private void EnsureUi()
+        {
+            if (_uiReady)
+            {
+                return;
+            }
+
+            CreateRuntimeCanvas();
+            _uiReady = _runtimeCanvas != null && _rootPanel != null;
+        }
+
+        private void CreateRuntimeCanvas()
+        {
+            if (_runtimeCanvas != null)
+            {
+                return;
+            }
+
+            Font font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            if (font == null)
+            {
+                font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            }
+
+            GameObject canvasObject = new GameObject($"{name}_ClassSelectionCanvas");
+            _runtimeCanvas = canvasObject.AddComponent<Canvas>();
+            _runtimeCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            _runtimeCanvas.sortingOrder = 5200;
+
+            CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+
+            canvasObject.AddComponent<GraphicRaycaster>();
+
+            _rootPanel = CreatePanel("ClassSelectionRoot", canvasObject.transform, Vector2.zero, Vector2.one, new Color(0.02f, 0.04f, 0.08f, 1f));
+
+            _timerText = CreateText(
+                "Timer",
+                _rootPanel.transform,
+                font,
+                34,
+                FontStyle.Bold,
+                TextAnchor.MiddleCenter,
+                new Color(0.86f, 0.94f, 1f, 1f));
+            SetAnchored(_timerText.rectTransform, new Vector2(0.5f, 0.93f), new Vector2(0.5f, 0.93f), new Vector2(0f, 0f), new Vector2(820f, 58f));
+
+            GameObject previewArea = new GameObject("PreviewArea", typeof(RectTransform));
+            previewArea.transform.SetParent(_rootPanel.transform, false);
+            RectTransform previewRect = previewArea.GetComponent<RectTransform>();
+            SetAnchored(previewRect, new Vector2(0.06f, 0.15f), new Vector2(0.50f, 0.83f), Vector2.zero, Vector2.zero);
+
+            Image previewShadow = new GameObject("ClassBallShadow", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+            previewShadow.transform.SetParent(previewArea.transform, false);
+            previewShadow.sprite = GetCircleSprite();
+            previewShadow.preserveAspect = true;
+            previewShadow.color = new Color(0f, 0f, 0f, 0.34f);
+            SetAnchored(previewShadow.rectTransform, new Vector2(0.5f, 0.53f), new Vector2(0.5f, 0.53f), new Vector2(26f, -34f), new Vector2(430f, 430f));
+
+            _previewBall = new GameObject("ClassBallPreview", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+            _previewBall.transform.SetParent(previewArea.transform, false);
+            _previewBall.sprite = GetCircleSprite();
+            _previewBall.preserveAspect = true;
+            SetAnchored(_previewBall.rectTransform, new Vector2(0.5f, 0.53f), new Vector2(0.5f, 0.53f), Vector2.zero, new Vector2(430f, 430f));
+
+            Outline previewOutline = _previewBall.gameObject.AddComponent<Outline>();
+            previewOutline.effectColor = new Color(1f, 1f, 1f, 0.16f);
+            previewOutline.effectDistance = new Vector2(3f, -3f);
+
+            _leftButton = CreateButton("PreviousClassButton", previewArea.transform, "Previous", font, 24);
+            SetAnchored(_leftButton.GetComponent<RectTransform>(), new Vector2(0.36f, 0.08f), new Vector2(0.36f, 0.08f), Vector2.zero, new Vector2(190f, 58f));
+            _leftButton.onClick.AddListener(() => CycleSelection(-1));
+
+            _rightButton = CreateButton("NextClassButton", previewArea.transform, "Next", font, 24);
+            SetAnchored(_rightButton.GetComponent<RectTransform>(), new Vector2(0.64f, 0.08f), new Vector2(0.64f, 0.08f), Vector2.zero, new Vector2(190f, 58f));
+            _rightButton.onClick.AddListener(() => CycleSelection(1));
+
+            GameObject statsPanel = CreatePanel("ClassStatsPanel", _rootPanel.transform, new Vector2(0.56f, 0.15f), new Vector2(0.92f, 0.83f), new Color(0.12f, 0.15f, 0.18f, 1f));
+            Outline panelOutline = statsPanel.AddComponent<Outline>();
+            panelOutline.effectColor = new Color(0.68f, 0.78f, 0.86f, 0.24f);
+            panelOutline.effectDistance = new Vector2(2f, -2f);
+
+            _classNameText = CreateText("ClassName", statsPanel.transform, font, 46, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
+            SetStretchTop(_classNameText.rectTransform, 44f, 44f, 34f, 60f);
+
+            _abilityNameText = CreateText("AbilityName", statsPanel.transform, font, 30, FontStyle.Bold, TextAnchor.UpperLeft, new Color(1f, 0.86f, 0.42f, 1f));
+            SetStretchTop(_abilityNameText.rectTransform, 44f, 44f, 104f, 42f);
+
+            _descriptionText = CreateText("Description", statsPanel.transform, font, 23, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.88f, 0.92f, 0.98f, 1f));
+            SetStretchTop(_descriptionText.rectTransform, 44f, 44f, 160f, 76f);
+
+            Image divider = new GameObject("ClassStatsDivider", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+            divider.transform.SetParent(statsPanel.transform, false);
+            divider.color = new Color(0.74f, 0.84f, 0.95f, 0.28f);
+            SetStretchTop(divider.rectTransform, 44f, 44f, 254f, 2f);
+
+            _statsText = CreateText("Stats", statsPanel.transform, font, 25, FontStyle.Normal, TextAnchor.UpperLeft, Color.white);
+            SetStretchTop(_statsText.rectTransform, 44f, 44f, 282f, 270f);
+
+            _statusText = CreateText("ReadyStatus", statsPanel.transform, font, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.82f, 0.94f, 1f, 1f));
+            SetStretchBottom(_statusText.rectTransform, 44f, 44f, 106f, 34f);
+
+            _confirmButton = CreateButton("ConfirmClassButton", statsPanel.transform, "Lock Class", font, 30);
+            SetAnchored(_confirmButton.GetComponent<RectTransform>(), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 34f), new Vector2(310f, 64f));
+            _confirmButton.onClick.AddListener(ConfirmSelection);
+
+            SetVisible(false);
+        }
+
+        private static GameObject CreatePanel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Color color)
+        {
+            GameObject panel = new GameObject(name, typeof(RectTransform), typeof(Image));
+            panel.transform.SetParent(parent, false);
+
+            RectTransform rect = panel.GetComponent<RectTransform>();
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+
+            Image image = panel.GetComponent<Image>();
+            image.color = color;
+            return panel;
+        }
+
+        private static Text CreateText(string name, Transform parent, Font font, int fontSize, FontStyle style, TextAnchor anchor, Color color)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(parent, false);
+
+            Text text = go.GetComponent<Text>();
+            text.font = font;
+            text.fontSize = Mathf.Max(10, fontSize);
+            text.fontStyle = style;
+            text.alignment = anchor;
+            text.color = color;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Truncate;
+            return text;
+        }
+
+        private static Button CreateButton(string name, Transform parent, string caption, Font font, int fontSize)
+        {
+            GameObject buttonObject = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            buttonObject.transform.SetParent(parent, false);
+
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = new Color(0.12f, 0.33f, 0.50f, 1f);
+
+            Button button = buttonObject.GetComponent<Button>();
+            ColorBlock colors = button.colors;
+            colors.normalColor = new Color(0.12f, 0.33f, 0.50f, 1f);
+            colors.highlightedColor = new Color(0.18f, 0.46f, 0.68f, 1f);
+            colors.pressedColor = new Color(0.08f, 0.24f, 0.38f, 1f);
+            colors.disabledColor = new Color(0.22f, 0.22f, 0.22f, 0.7f);
+            button.colors = colors;
+
+            Text label = CreateText("Label", buttonObject.transform, font, fontSize, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            RectTransform labelRect = label.rectTransform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            return button;
+        }
+
+        private static string BuildStatsTable(Sumo.SumoPlayerClassDefinition definition)
+        {
+            switch (definition.Class)
+            {
+                case Sumo.SumoPlayerClass.Fatso:
+                    return "Size                 x3\nSpeed                x1/3 while active\nIncoming push        x0.15\nOutgoing push        x2\nActive time          10s\nRecharge             30s";
+                case Sumo.SumoPlayerClass.Jumper:
+                default:
+                    return "Role                 Mobility\nJump boost           +12 velocity\nAbility input        F while active\nActive time          10s\nRecharge             30s";
+            }
+        }
+
+        private static void SetAnchored(RectTransform rect, Vector2 anchorMin, Vector2 anchorMax, Vector2 anchoredPosition, Vector2 sizeDelta)
+        {
+            if (rect == null)
+            {
+                return;
+            }
+
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = sizeDelta;
+        }
+
+        private static void SetStretchTop(RectTransform rect, float left, float right, float top, float height)
+        {
+            if (rect == null)
+            {
+                return;
+            }
+
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2((left - right) * 0.5f, -top);
+            rect.sizeDelta = new Vector2(-(left + right), height);
+        }
+
+        private static void SetStretchBottom(RectTransform rect, float left, float right, float bottom, float height)
+        {
+            if (rect == null)
+            {
+                return;
+            }
+
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(1f, 0f);
+            rect.pivot = new Vector2(0.5f, 0f);
+            rect.anchoredPosition = new Vector2((left - right) * 0.5f, bottom);
+            rect.sizeDelta = new Vector2(-(left + right), height);
+        }
+
+        private static Sprite GetCircleSprite()
+        {
+            if (_circleSprite != null)
+            {
+                return _circleSprite;
+            }
+
+            const int size = 128;
+            Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                name = "ClassSelectionCircle"
+            };
+
+            Color clear = new Color(1f, 1f, 1f, 0f);
+            Color white = Color.white;
+            Vector2 center = new Vector2((size - 1) * 0.5f, (size - 1) * 0.5f);
+            float radius = size * 0.48f;
+            float softEdge = 1.5f;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float distance = Vector2.Distance(new Vector2(x, y), center);
+                    float alpha = Mathf.Clamp01((radius - distance) / softEdge);
+                    texture.SetPixel(x, y, alpha > 0f ? new Color(white.r, white.g, white.b, alpha) : clear);
+                }
+            }
+
+            texture.Apply(false, true);
+            _circleSprite = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f);
+            return _circleSprite;
+        }
+
+        private void SetVisible(bool visible)
+        {
+            if (_rootPanel != null)
+            {
+                _rootPanel.SetActive(visible);
+            }
+
+            if (_runtimeCanvas != null)
+            {
+                _runtimeCanvas.enabled = visible;
+            }
+        }
+
+        private void ResolveManagerIfNeeded()
+        {
+            if (matchRoundManager == null)
+            {
+                matchRoundManager = FindObjectOfType<MatchRoundManager>(true);
+            }
+        }
+
+        private void CacheReferencesIfNeeded()
+        {
+            if (networkObject == null)
+            {
+                networkObject = GetComponent<NetworkObject>();
+            }
+
+            if (playerRoundState == null)
+            {
+                playerRoundState = GetComponent<PlayerRoundState>();
+            }
         }
     }
 

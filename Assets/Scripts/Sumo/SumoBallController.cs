@@ -1,6 +1,7 @@
 using System;
 using Fusion;
 using Fusion.Addons.Physics;
+using Sumo.Gameplay;
 using UnityEngine;
 
 namespace Sumo
@@ -51,8 +52,23 @@ namespace Sumo
         private SphereCollider _sphereCollider;
         private NetworkRigidbody3D _networkRigidbody;
         private SumoCollisionController _collisionController;
+        private PlayerRoundState _roundState;
+        private MatchRoundManager _matchRoundManager;
         private MeshRenderer _meshRenderer;
+        private MaterialPropertyBlock _materialPropertyBlock;
         private float _scaledRadius = 0.5f;
+        private Vector3 _baseLocalScale = Vector3.one;
+        private bool _hasBaseLocalScale;
+        private int _lastAuthorityAbilitySequence;
+        private int _lastPredictedAbilitySequence;
+        private int _lastProcessedClassRaw = int.MinValue;
+        private int _predictedClassRaw = int.MinValue;
+        private float _predictedAbilityStamina01 = FullAbilityStamina;
+        private bool _predictedAbilityActive;
+        private float _predictedScaleMultiplier = 1f;
+        private int _lastAppliedClassRaw = int.MinValue;
+        private float _lastAppliedScaleMultiplier = -1f;
+        private int _ignoreGroundedUntilTick = int.MinValue;
         private static Material _sharedRuntimeMaterial;
         private Vector3 _cachedWallNormal;
         private int _cachedWallTick = int.MinValue;
@@ -72,6 +88,11 @@ namespace Sumo
         private const float FallbackRollingDrag = 1.1f;
         private const float FallbackSteeringResponsiveness = 9f;
         private const float DefaultMovementSpeedMultiplier = 1.5f;
+        private const float FullAbilityStamina = 1f;
+        private const float AbilityReadyEpsilon = 0.001f;
+        private const int JumperGroundIgnoreTicks = 6;
+        private const float JumperGroundedVelocityEpsilon = 0.05f;
+        private const float JumperInstantLift = 0.045f;
         private Vector3 _currentMoveDirection = Vector3.zero;
         private float _currentSpeed01;
         private bool _isDashing;
@@ -90,6 +111,10 @@ namespace Sumo
         [Networked] private NetworkBool ReplicatedBrake { get; set; }
         [Networked] private Vector3 ReplicatedContactIntent { get; set; }
         [Networked] private float ReplicatedContactSpeed01 { get; set; }
+        [Networked] public float AbilityStamina01 { get; private set; }
+        [Networked] public NetworkBool AbilityActive { get; private set; }
+        [Networked] private int ReplicatedClassRaw { get; set; }
+        [Networked] private float ReplicatedScaleMultiplier { get; set; }
 
         private struct MovementCommand
         {
@@ -98,6 +123,8 @@ namespace Sumo
             public float MoveStrength01;
             public bool HasMoveInput;
             public bool HardBrake;
+            public bool AbilityPressed;
+            public int AbilitySequence;
         }
 
         public Transform CameraFollowTarget => visualTarget != null ? visualTarget : transform;
@@ -124,6 +151,18 @@ namespace Sumo
         public float DashPower => _dashPower;
         public Tick LastDashTick => _lastDashTick;
         public SumoBallPhysicsConfig PhysicsConfig => physicsConfig;
+        public SumoPlayerClass CurrentClass => GetDisplayedPlayerClass();
+        public bool IsClassAbilityActive => DisplayedAbilityActive;
+        public float DisplayedAbilityStamina01 => GetDisplayedAbilityStamina01();
+        public bool DisplayedAbilityActive => GetDisplayedAbilityActive();
+        public SumoPlayerClass AuthoritativeClass => GetReplicatedPlayerClass();
+        public float AuthoritativeAbilityStamina01 => Mathf.Clamp01(AbilityStamina01);
+        public bool AuthoritativeAbilityActive => AbilityActive;
+        public float ClassOutgoingPushMultiplier => ResolveOutgoingPushMultiplier();
+        public float ClassIncomingPushMultiplier => ResolveIncomingPushMultiplier();
+        public float ClassCombatSpeedMultiplier => ResolveCombatSpeedMultiplier();
+        public float ClassPushSpeedFloorShare => ResolvePushSpeedFloorShare();
+        public float ClassShoveForceFloor => ResolveShoveForceFloor();
 
         public void SetExternalMovementTarget(Vector3 worldMoveDirection, float targetSpeed, bool hardBrake = false)
         {
@@ -136,6 +175,55 @@ namespace Sumo
             }
 
             SetExternalTargetHorizontalVelocity(targetHorizontalVelocity, hardBrake);
+        }
+
+        public void PreviewClassAbilityPress(int abilitySequence)
+        {
+            if (!HasInputAuthority || HasStateAuthority || abilitySequence <= 0)
+            {
+                return;
+            }
+
+            CacheComponents();
+
+            SumoPlayerClass selectedClass = ResolveSelectedPlayerClass();
+            int selectedRaw = (int)selectedClass;
+            if (_predictedClassRaw != selectedRaw)
+            {
+                ResetPredictedClassAbilityState(selectedClass);
+            }
+
+            if (!TryConsumeAbilitySequence(abilitySequence, ref _lastPredictedAbilitySequence))
+            {
+                return;
+            }
+
+            if (selectedClass == SumoPlayerClass.None || !ResolveClassAbilitiesUnlocked())
+            {
+                _predictedAbilityActive = false;
+                _predictedAbilityStamina01 = FullAbilityStamina;
+                _predictedScaleMultiplier = 1f;
+                return;
+            }
+
+            SumoPlayerClassDefinition definition = SumoPlayerClassCatalog.GetDefinition(selectedClass);
+            if (!CanStartPredictedAbility())
+            {
+                return;
+            }
+
+            _predictedAbilityActive = true;
+            _predictedAbilityStamina01 = FullAbilityStamina;
+
+            if (selectedClass == SumoPlayerClass.Jumper && IsGrounded())
+            {
+                TryApplyJumperJump(definition);
+            }
+
+            _predictedScaleMultiplier = selectedClass == SumoPlayerClass.Fatso
+                ? Mathf.Max(0.01f, definition.ScaleMultiplier)
+                : 1f;
+            ApplyClassPresentation();
         }
 
         public void SetExternalTargetHorizontalVelocity(Vector3 targetHorizontalVelocity, bool hardBrake = false)
@@ -216,19 +304,35 @@ namespace Sumo
         {
             EnsurePresentationComponents();
             CacheComponents();
+            CaptureBaseLocalScaleIfNeeded();
         }
 
         public override void Spawned()
         {
             EnsurePresentationComponents();
             CacheComponents();
+            CaptureBaseLocalScaleIfNeeded();
             _lastResolvedMovementCommand = default;
             _hasLastResolvedMovementCommand = false;
             _smoothedRamDriveAssist01 = 0f;
+            _lastAuthorityAbilitySequence = 0;
+            _lastPredictedAbilitySequence = 0;
+            _lastProcessedClassRaw = int.MinValue;
+            _predictedClassRaw = int.MinValue;
+            _predictedAbilityStamina01 = FullAbilityStamina;
+            _predictedAbilityActive = false;
+            _predictedScaleMultiplier = 1f;
             ApplyRigidbodySettings();
             ConfigureInterpolationTarget();
             RefreshScaledRadius();
             EnsureVisibleRenderer();
+
+            if (HasStateAuthority)
+            {
+                ServerResetClassAbilityState();
+            }
+
+            ApplyClassPresentation();
 
             if (ShouldEnableRemoteProxySimulation()
                 && Runner != null
@@ -265,6 +369,9 @@ namespace Sumo
             bool hasMoveInput = command.HasMoveInput;
             bool hardBrake = command.HardBrake;
             bool grounded = IsGrounded();
+            UpdateClassAbilityState(command.AbilityPressed, command.AbilitySequence, grounded, deltaTime);
+            ApplyClassPresentation();
+            grounded = IsGrounded();
 
             Vector3 velocity = _rigidbody.linearVelocity;
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
@@ -733,7 +840,13 @@ namespace Sumo
             {
                 if (GetInput(out SumoInputData input))
                 {
-                    BuildMovementCommandFromInput(input.Move, input.CameraYaw, input.Buttons.IsSet((int)SumoInputButton.Brake), out command);
+                    BuildMovementCommandFromInput(
+                        input.Move,
+                        input.CameraYaw,
+                        input.Buttons.IsSet((int)SumoInputButton.Brake),
+                        input.Buttons.IsSet((int)SumoInputButton.Ability),
+                        input.AbilitySequence,
+                        out command);
                     _lastResolvedMovementCommand = command;
                     _hasLastResolvedMovementCommand = true;
                     return true;
@@ -745,7 +858,7 @@ namespace Sumo
                     return true;
                 }
 
-                BuildMovementCommandFromInput(Vector2.zero, 0f, false, out command);
+                BuildMovementCommandFromInput(Vector2.zero, 0f, false, false, 0, out command);
                 return true;
             }
 
@@ -762,6 +875,8 @@ namespace Sumo
             Vector2 moveInput,
             float cameraYaw,
             bool hardBrake,
+            bool abilityPressed,
+            int abilitySequence,
             out MovementCommand command)
         {
             Vector2 clampedMoveInput = moveInput;
@@ -780,6 +895,8 @@ namespace Sumo
                 : Vector3.zero;
 
             BuildMovementCommandFromTargetHorizontalVelocity(targetHorizontalVelocity, hardBrake, out command);
+            command.AbilityPressed = abilityPressed;
+            command.AbilitySequence = Mathf.Max(0, abilitySequence);
         }
 
         private void BuildMovementCommandFromTargetHorizontalVelocity(
@@ -805,7 +922,9 @@ namespace Sumo
                 MoveDirection = moveDirection,
                 MoveStrength01 = moveStrength01,
                 HasMoveInput = hasMoveInput,
-                HardBrake = hardBrake
+                HardBrake = hardBrake,
+                AbilityPressed = false,
+                AbilitySequence = 0
             };
         }
 
@@ -838,7 +957,9 @@ namespace Sumo
                 MoveDirection = moveDirection,
                 MoveStrength01 = moveStrength01,
                 HasMoveInput = hasMoveInput,
-                HardBrake = ReplicatedBrake
+                HardBrake = ReplicatedBrake,
+                AbilityPressed = false,
+                AbilitySequence = 0
             };
         }
 
@@ -888,6 +1009,16 @@ namespace Sumo
                 _collisionController = GetComponent<SumoCollisionController>();
             }
 
+            if (_roundState == null)
+            {
+                _roundState = GetComponent<PlayerRoundState>();
+            }
+
+            if (_matchRoundManager == null)
+            {
+                _matchRoundManager = FindFirstObjectByType<MatchRoundManager>(FindObjectsInactive.Include);
+            }
+
             if (accelerationConfig == null)
             {
                 accelerationConfig = GetComponent<SumoAccelerationConfig>();
@@ -902,6 +1033,11 @@ namespace Sumo
             {
                 _meshRenderer = GetComponent<MeshRenderer>();
             }
+        }
+
+        public override void Render()
+        {
+            ApplyClassPresentation();
         }
 
         private void EnsurePresentationComponents()
@@ -936,6 +1072,427 @@ namespace Sumo
             {
                 _lastDashTick = Runner.Tick;
             }
+        }
+
+        public void ServerResetClassAbilityState()
+        {
+            if (!HasStateAuthority)
+            {
+                return;
+            }
+
+            SumoPlayerClass selectedClass = ResolveSelectedPlayerClass();
+            ReplicatedClassRaw = (int)selectedClass;
+            AbilityStamina01 = FullAbilityStamina;
+            AbilityActive = false;
+            ReplicatedScaleMultiplier = 1f;
+            _lastAuthorityAbilitySequence = 0;
+            _lastPredictedAbilitySequence = 0;
+            _ignoreGroundedUntilTick = int.MinValue;
+            _lastProcessedClassRaw = ReplicatedClassRaw;
+            ResetPredictedClassAbilityState(selectedClass);
+            ApplyClassPresentation();
+        }
+
+        private void UpdateClassAbilityState(bool abilityPressed, int abilitySequence, bool grounded, float deltaTime)
+        {
+            if (HasStateAuthority)
+            {
+                UpdateAuthorityClassAbilityState(abilityPressed, abilitySequence, grounded, deltaTime);
+                return;
+            }
+
+            if (HasInputAuthority)
+            {
+                UpdatePredictedClassAbilityState(abilityPressed, abilitySequence, grounded, deltaTime);
+            }
+        }
+
+        private void UpdateAuthorityClassAbilityState(bool abilityPressed, int abilitySequence, bool grounded, float deltaTime)
+        {
+            SumoPlayerClass selectedClass = ResolveSelectedPlayerClass();
+            int selectedRaw = (int)selectedClass;
+            if (_lastProcessedClassRaw != selectedRaw)
+            {
+                AbilityActive = false;
+                AbilityStamina01 = FullAbilityStamina;
+                _lastAuthorityAbilitySequence = 0;
+                _lastProcessedClassRaw = selectedRaw;
+            }
+
+            ReplicatedClassRaw = selectedRaw;
+
+            bool pressedThisTick = abilityPressed && TryConsumeAbilitySequence(abilitySequence, ref _lastAuthorityAbilitySequence);
+
+            if (selectedClass == SumoPlayerClass.None)
+            {
+                AbilityActive = false;
+                AbilityStamina01 = FullAbilityStamina;
+                ReplicatedScaleMultiplier = 1f;
+                return;
+            }
+
+            SumoPlayerClassDefinition definition = SumoPlayerClassCatalog.GetDefinition(selectedClass);
+            if (!ResolveClassAbilitiesUnlocked())
+            {
+                AbilityActive = false;
+                AbilityStamina01 = FullAbilityStamina;
+                ReplicatedScaleMultiplier = 1f;
+                return;
+            }
+
+            if (pressedThisTick)
+            {
+                if (IsAbilityReady(AbilityStamina01, AbilityActive))
+                {
+                    AbilityActive = true;
+                    AbilityStamina01 = FullAbilityStamina;
+                }
+
+                if (selectedClass == SumoPlayerClass.Jumper && AbilityActive && grounded)
+                {
+                    TryApplyJumperJump(definition);
+                }
+            }
+
+            if (AbilityActive)
+            {
+                float activeSeconds = Mathf.Max(0.01f, definition.AbilityActiveSeconds);
+                AbilityStamina01 = Mathf.Max(0f, AbilityStamina01 - deltaTime / activeSeconds);
+                if (AbilityStamina01 <= AbilityReadyEpsilon)
+                {
+                    AbilityStamina01 = 0f;
+                    AbilityActive = false;
+                }
+            }
+            else
+            {
+                float rechargeSeconds = Mathf.Max(0.01f, definition.AbilityRechargeSeconds);
+                AbilityStamina01 = Mathf.Min(FullAbilityStamina, AbilityStamina01 + deltaTime / rechargeSeconds);
+            }
+
+            ReplicatedScaleMultiplier = selectedClass == SumoPlayerClass.Fatso && AbilityActive
+                ? Mathf.Max(0.01f, definition.ScaleMultiplier)
+                : 1f;
+        }
+
+        private void UpdatePredictedClassAbilityState(bool abilityPressed, int abilitySequence, bool grounded, float deltaTime)
+        {
+            SumoPlayerClass selectedClass = ResolveSelectedPlayerClass();
+            int selectedRaw = (int)selectedClass;
+            if (_predictedClassRaw != selectedRaw)
+            {
+                ResetPredictedClassAbilityState(selectedClass);
+            }
+            else
+            {
+                SyncPredictedClassAbilityStateWithAuthority();
+            }
+
+            bool pressedThisTick = abilityPressed && TryConsumeAbilitySequence(abilitySequence, ref _lastPredictedAbilitySequence);
+
+            if (selectedClass == SumoPlayerClass.None)
+            {
+                _predictedAbilityActive = false;
+                _predictedAbilityStamina01 = FullAbilityStamina;
+                _predictedScaleMultiplier = 1f;
+                return;
+            }
+
+            SumoPlayerClassDefinition definition = SumoPlayerClassCatalog.GetDefinition(selectedClass);
+            if (!ResolveClassAbilitiesUnlocked())
+            {
+                _predictedAbilityActive = false;
+                _predictedAbilityStamina01 = FullAbilityStamina;
+                _predictedScaleMultiplier = 1f;
+                return;
+            }
+
+            if (pressedThisTick)
+            {
+                if (CanStartPredictedAbility())
+                {
+                    _predictedAbilityActive = true;
+                    _predictedAbilityStamina01 = FullAbilityStamina;
+                }
+
+                if (selectedClass == SumoPlayerClass.Jumper && _predictedAbilityActive && grounded)
+                {
+                    TryApplyJumperJump(definition);
+                }
+            }
+
+            if (_predictedAbilityActive)
+            {
+                float activeSeconds = Mathf.Max(0.01f, definition.AbilityActiveSeconds);
+                _predictedAbilityStamina01 = Mathf.Max(0f, _predictedAbilityStamina01 - deltaTime / activeSeconds);
+                if (_predictedAbilityStamina01 <= AbilityReadyEpsilon)
+                {
+                    _predictedAbilityStamina01 = 0f;
+                    _predictedAbilityActive = false;
+                }
+            }
+            else
+            {
+                float rechargeSeconds = Mathf.Max(0.01f, definition.AbilityRechargeSeconds);
+                _predictedAbilityStamina01 = Mathf.Min(FullAbilityStamina, _predictedAbilityStamina01 + deltaTime / rechargeSeconds);
+            }
+
+            _predictedScaleMultiplier = selectedClass == SumoPlayerClass.Fatso && _predictedAbilityActive
+                ? Mathf.Max(0.01f, definition.ScaleMultiplier)
+                : 1f;
+        }
+
+        private void ResetPredictedClassAbilityState(SumoPlayerClass selectedClass)
+        {
+            _predictedClassRaw = (int)selectedClass;
+            _predictedAbilityStamina01 = FullAbilityStamina;
+            _predictedAbilityActive = false;
+            _predictedScaleMultiplier = 1f;
+            _lastPredictedAbilitySequence = 0;
+        }
+
+        private static bool TryConsumeAbilitySequence(int abilitySequence, ref int lastConsumedSequence)
+        {
+            if (abilitySequence <= 0 || abilitySequence <= lastConsumedSequence)
+            {
+                return false;
+            }
+
+            lastConsumedSequence = abilitySequence;
+            return true;
+        }
+
+        private static bool IsAbilityReady(float stamina01, bool active)
+        {
+            return !active && stamina01 >= FullAbilityStamina - AbilityReadyEpsilon;
+        }
+
+        private bool CanStartPredictedAbility()
+        {
+            return IsAbilityReady(_predictedAbilityStamina01, _predictedAbilityActive);
+        }
+
+        private bool ResolveClassAbilitiesUnlocked()
+        {
+            if (_matchRoundManager == null)
+            {
+                _matchRoundManager = FindFirstObjectByType<MatchRoundManager>(FindObjectsInactive.Include);
+            }
+
+            if (_matchRoundManager == null)
+            {
+                return Runner == null || Object == null || !Object.IsInSimulation;
+            }
+
+            return _matchRoundManager.IsNetworkSpawned && _matchRoundManager.ClassAbilitiesUnlocked;
+        }
+
+        private void SyncPredictedClassAbilityStateWithAuthority()
+        {
+            if (HasStateAuthority)
+            {
+                return;
+            }
+
+            float authorityStamina = Mathf.Clamp01(AbilityStamina01);
+            if (AbilityActive)
+            {
+                if (!_predictedAbilityActive)
+                {
+                    _predictedAbilityActive = true;
+                    _predictedAbilityStamina01 = authorityStamina;
+                }
+                else if (authorityStamina < _predictedAbilityStamina01)
+                {
+                    _predictedAbilityStamina01 = authorityStamina;
+                }
+
+                return;
+            }
+
+            if (_predictedAbilityActive && authorityStamina < FullAbilityStamina - AbilityReadyEpsilon)
+            {
+                _predictedAbilityActive = false;
+                _predictedAbilityStamina01 = Mathf.Min(_predictedAbilityStamina01, authorityStamina);
+                _predictedScaleMultiplier = 1f;
+                return;
+            }
+
+            if (!_predictedAbilityActive && authorityStamina >= FullAbilityStamina - AbilityReadyEpsilon)
+            {
+                _predictedAbilityStamina01 = FullAbilityStamina;
+                _predictedScaleMultiplier = 1f;
+                return;
+            }
+
+            if (!_predictedAbilityActive)
+            {
+                _predictedAbilityStamina01 = Mathf.Min(_predictedAbilityStamina01, authorityStamina);
+                _predictedScaleMultiplier = 1f;
+            }
+        }
+
+        private bool TryApplyJumperJump(SumoPlayerClassDefinition definition)
+        {
+            if (_rigidbody == null)
+            {
+                return false;
+            }
+
+            float jumpVelocity = Mathf.Max(0f, definition.JumpVelocityChange);
+            if (jumpVelocity <= 0f)
+            {
+                return false;
+            }
+
+            Vector3 velocity = _rigidbody.linearVelocity;
+            velocity.y = jumpVelocity;
+            _rigidbody.position += Vector3.up * Mathf.Max(JumperInstantLift, _scaledRadius * 0.04f);
+            _rigidbody.linearVelocity = velocity;
+            _rigidbody.WakeUp();
+            _ignoreGroundedUntilTick = GetCurrentSimulationTick() + JumperGroundIgnoreTicks;
+            return true;
+        }
+
+        private SumoPlayerClass ResolveSelectedPlayerClass()
+        {
+            if (_roundState == null)
+            {
+                CacheComponents();
+            }
+
+            if (_roundState != null)
+            {
+                if (_roundState.SelectedClassRaw == (int)SumoPlayerClass.None
+                    && Object != null
+                    && Object.InputAuthority == PlayerRef.None)
+                {
+                    return SumoPlayerClass.None;
+                }
+
+                return _roundState.SelectedClass;
+            }
+
+            return SumoPlayerClassCatalog.DefaultClass;
+        }
+
+        private SumoPlayerClass GetReplicatedPlayerClass()
+        {
+            return ReplicatedClassRaw == int.MinValue || ReplicatedClassRaw == (int)SumoPlayerClass.None
+                ? SumoPlayerClass.None
+                : SumoPlayerClassCatalog.FromRaw(ReplicatedClassRaw);
+        }
+
+        private SumoPlayerClass GetPredictedPlayerClass()
+        {
+            if (_predictedClassRaw == int.MinValue || _predictedClassRaw == (int)SumoPlayerClass.None)
+            {
+                return SumoPlayerClass.None;
+            }
+
+            return SumoPlayerClassCatalog.FromRaw(_predictedClassRaw);
+        }
+
+        private SumoPlayerClass GetDisplayedPlayerClass()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? GetPredictedPlayerClass()
+                : GetReplicatedPlayerClass();
+        }
+
+        private float GetDisplayedAbilityStamina01()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? _predictedAbilityStamina01
+                : AbilityStamina01;
+        }
+
+        private bool GetDisplayedAbilityActive()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? _predictedAbilityActive
+                : AbilityActive;
+        }
+
+        private bool ShouldUsePredictedAbilityState()
+        {
+            return HasInputAuthority && !HasStateAuthority && _predictedClassRaw != int.MinValue;
+        }
+
+        private SumoPlayerClass GetSimulationPlayerClass()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? GetPredictedPlayerClass()
+                : GetReplicatedPlayerClass();
+        }
+
+        private bool GetSimulationAbilityActive()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? _predictedAbilityActive
+                : AbilityActive;
+        }
+
+        private float ResolveOutgoingPushMultiplier()
+        {
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass != SumoPlayerClass.Fatso || !GetSimulationAbilityActive())
+            {
+                return 1f;
+            }
+
+            return Mathf.Max(0.01f, SumoPlayerClassCatalog.GetDefinition(playerClass).OutgoingPushMultiplier);
+        }
+
+        private float ResolveIncomingPushMultiplier()
+        {
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass != SumoPlayerClass.Fatso || !GetSimulationAbilityActive())
+            {
+                return 1f;
+            }
+
+            return Mathf.Max(0.01f, SumoPlayerClassCatalog.GetDefinition(playerClass).IncomingPushMultiplier);
+        }
+
+        private float ResolveCombatSpeedMultiplier()
+        {
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass != SumoPlayerClass.Fatso || !GetSimulationAbilityActive())
+            {
+                return 1f;
+            }
+
+            float movementMultiplier = SumoPlayerClassCatalog.GetDefinition(playerClass).SpeedMultiplier;
+            if (movementMultiplier >= 1f || movementMultiplier <= 0.0001f)
+            {
+                return 1f;
+            }
+
+            return Mathf.Clamp(1f / movementMultiplier, 1f, 6f);
+        }
+
+        private float ResolvePushSpeedFloorShare()
+        {
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass != SumoPlayerClass.Fatso || !GetSimulationAbilityActive())
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(SumoPlayerClassCatalog.GetDefinition(playerClass).PushSpeedFloorShare);
+        }
+
+        private float ResolveShoveForceFloor()
+        {
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass != SumoPlayerClass.Fatso || !GetSimulationAbilityActive())
+            {
+                return 1f;
+            }
+
+            return Mathf.Clamp(SumoPlayerClassCatalog.GetDefinition(playerClass).ShoveForceFloor, 1f, 5f);
         }
 
         public float GetDashImpactMultiplier(float configuredDashMultiplier)
@@ -1032,7 +1589,14 @@ namespace Sumo
             float configured = movementSpeedMultiplier > 0.0001f
                 ? movementSpeedMultiplier
                 : DefaultMovementSpeedMultiplier;
-            return Mathf.Max(0.01f, configured);
+            float classMultiplier = 1f;
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass == SumoPlayerClass.Fatso && GetSimulationAbilityActive())
+            {
+                classMultiplier = SumoPlayerClassCatalog.GetDefinition(playerClass).SpeedMultiplier;
+            }
+
+            return Mathf.Max(0.01f, configured * Mathf.Max(0.01f, classMultiplier));
         }
 
         private Vector3 GetTargetHorizontalVelocity(Vector2 moveInput, float cameraYaw)
@@ -1107,6 +1671,16 @@ namespace Sumo
                 return false;
             }
 
+            if (ShouldIgnoreGroundedAfterJumperJump())
+            {
+                return false;
+            }
+
+            if (_rigidbody.linearVelocity.y > JumperGroundedVelocityEpsilon)
+            {
+                return false;
+            }
+
             float checkDistance = _scaledRadius + groundCheckDistance;
             if (!Physics.Raycast(
                 _rigidbody.worldCenterOfMass,
@@ -1120,6 +1694,21 @@ namespace Sumo
             }
 
             return hit.normal.y >= minGroundNormalDot;
+        }
+
+        private bool ShouldIgnoreGroundedAfterJumperJump()
+        {
+            if (_ignoreGroundedUntilTick == int.MinValue)
+            {
+                return false;
+            }
+
+            return GetCurrentSimulationTick() <= _ignoreGroundedUntilTick;
+        }
+
+        private int GetCurrentSimulationTick()
+        {
+            return Runner != null ? Runner.Tick.Raw : Time.frameCount;
         }
 
         private void ConfigureInterpolationTarget()
@@ -1241,6 +1830,131 @@ namespace Sumo
             Debug.Log($"SumoBallController: applied fallback material on {name}.");
         }
 
+        private void ApplyClassPresentation()
+        {
+            CaptureBaseLocalScaleIfNeeded();
+
+            float scaleMultiplier = ResolvePresentationScaleMultiplier();
+            if (!Mathf.Approximately(_lastAppliedScaleMultiplier, scaleMultiplier))
+            {
+                Vector3 targetScale = new Vector3(
+                    _baseLocalScale.x * scaleMultiplier,
+                    _baseLocalScale.y * scaleMultiplier,
+                    _baseLocalScale.z * scaleMultiplier);
+
+                if ((transform.localScale - targetScale).sqrMagnitude > 0.000001f)
+                {
+                    transform.localScale = targetScale;
+                    RefreshScaledRadius();
+                }
+
+                _lastAppliedScaleMultiplier = scaleMultiplier;
+            }
+
+            int classRaw = ResolvePresentationClassRaw();
+            if (_lastAppliedClassRaw == classRaw)
+            {
+                return;
+            }
+
+            MeshRenderer targetRenderer = ResolveTargetRenderer();
+            if (targetRenderer == null)
+            {
+                _lastAppliedClassRaw = classRaw;
+                return;
+            }
+
+            if (_materialPropertyBlock == null)
+            {
+                _materialPropertyBlock = new MaterialPropertyBlock();
+            }
+
+            Color classColor = ResolvePresentationColor(classRaw);
+            targetRenderer.GetPropertyBlock(_materialPropertyBlock);
+            _materialPropertyBlock.SetColor("_Color", classColor);
+            _materialPropertyBlock.SetColor("_BaseColor", classColor);
+            targetRenderer.SetPropertyBlock(_materialPropertyBlock);
+            _lastAppliedClassRaw = classRaw;
+        }
+
+        private float ResolvePresentationScaleMultiplier()
+        {
+            float scaleMultiplier = ReplicatedScaleMultiplier;
+            if (ShouldUsePredictedAbilityState())
+            {
+                SumoPlayerClass predictedClass = GetPredictedPlayerClass();
+                if (predictedClass == SumoPlayerClass.Fatso
+                    && (_predictedAbilityActive
+                        || AbilityActive
+                        || _predictedScaleMultiplier > 1.01f
+                        || ReplicatedScaleMultiplier > 1.01f))
+                {
+                    scaleMultiplier = SumoPlayerClassCatalog.GetDefinition(predictedClass).ScaleMultiplier;
+                }
+                else
+                {
+                    scaleMultiplier = _predictedScaleMultiplier;
+                }
+            }
+
+            return scaleMultiplier > 0.0001f ? scaleMultiplier : 1f;
+        }
+
+        private int ResolvePresentationClassRaw()
+        {
+            return ShouldUsePredictedAbilityState()
+                ? _predictedClassRaw
+                : ReplicatedClassRaw;
+        }
+
+        private Color ResolvePresentationColor(int classRaw)
+        {
+            SumoPlayerClass playerClass = classRaw == int.MinValue || classRaw == (int)SumoPlayerClass.None
+                ? SumoPlayerClass.None
+                : SumoPlayerClassCatalog.FromRaw(classRaw);
+            if (playerClass == SumoPlayerClass.None)
+            {
+                return runtimeBallColor;
+            }
+
+            return SumoPlayerClassCatalog.GetDefinition(playerClass).Color;
+        }
+
+        private MeshRenderer ResolveTargetRenderer()
+        {
+            if (_meshRenderer != null)
+            {
+                return _meshRenderer;
+            }
+
+            if (visualTarget != null)
+            {
+                MeshRenderer visualRenderer = visualTarget.GetComponentInChildren<MeshRenderer>(true);
+                if (visualRenderer != null)
+                {
+                    return visualRenderer;
+                }
+            }
+
+            return GetComponentInChildren<MeshRenderer>(true);
+        }
+
+        private void CaptureBaseLocalScaleIfNeeded()
+        {
+            if (_hasBaseLocalScale)
+            {
+                return;
+            }
+
+            _baseLocalScale = transform.localScale;
+            if (_baseLocalScale.sqrMagnitude < 0.0001f)
+            {
+                _baseLocalScale = Vector3.one;
+            }
+
+            _hasBaseLocalScale = true;
+        }
+
         private void OnValidate()
         {
             movementSpeedMultiplier = Mathf.Max(0.01f, movementSpeedMultiplier);
@@ -1268,6 +1982,11 @@ namespace Sumo
             if (accelerationConfig == null)
             {
                 accelerationConfig = GetComponent<SumoAccelerationConfig>();
+            }
+
+            if (_roundState == null)
+            {
+                _roundState = GetComponent<PlayerRoundState>();
             }
 
             if (Application.isPlaying)

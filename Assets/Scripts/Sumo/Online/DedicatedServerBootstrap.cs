@@ -89,7 +89,8 @@ namespace Sumo.Online
                 _runner,
                 playerPrefab,
                 launch.MinimumPlayers,
-                shutdownWhenPlayersDropBelowMinimum);
+                shutdownWhenPlayersDropBelowMinimum,
+                launch.MatchmakingPreconfirmed);
 
             Dictionary<string, SessionProperty> sessionProperties = new Dictionary<string, SessionProperty>
             {
@@ -97,6 +98,8 @@ namespace Sumo.Online
                 ["map"] = launch.SceneName,
                 ["matchId"] = launch.MatchId,
                 ["minPlayers"] = launch.MinimumPlayers,
+                ["maxPlayers"] = launch.MaxPlayers,
+                ["accepting"] = 1,
                 ["region"] = launch.Region
             };
 
@@ -109,7 +112,7 @@ namespace Sumo.Online
                 SceneManager = sceneManager,
                 SessionProperties = sessionProperties,
                 IsOpen = true,
-                IsVisible = false
+                IsVisible = true
             };
 
             StartGameResult result = await _runner.StartGame(startArgs);
@@ -165,7 +168,7 @@ namespace Sumo.Online
             ushort fallbackPort = bootstrapConfig != null ? bootstrapConfig.DefaultServerPort : (ushort)27015;
             int requestedMaxPlayers = GetIntArgValue("maxPlayers", fallbackMaxPlayers).GetValueOrDefault(fallbackMaxPlayers);
 
-            // Dedicated server currently runs at a fixed 10-player cap.
+            // Dedicated server currently runs at a fixed 8-player cap.
             int resolvedMaxPlayers = Mathf.Clamp(Mathf.Max(HardMaxPlayers, requestedMaxPlayers), 2, HardMaxPlayers);
 
             LaunchParameters launch = new LaunchParameters
@@ -180,7 +183,8 @@ namespace Sumo.Online
                     GetIntArgValue("minPlayers", fallbackMinPlayers).GetValueOrDefault(fallbackMinPlayers),
                     2,
                     resolvedMaxPlayers),
-                Port = (ushort)Mathf.Clamp(GetIntArgValue("port", fallbackPort).GetValueOrDefault(fallbackPort), 0, ushort.MaxValue)
+                Port = (ushort)Mathf.Clamp(GetIntArgValue("port", fallbackPort).GetValueOrDefault(fallbackPort), 0, ushort.MaxValue),
+                MatchmakingPreconfirmed = GetBoolArgValue("matchmakingPreconfirmed", false)
             };
 
             if (string.IsNullOrWhiteSpace(launch.SceneName))
@@ -325,6 +329,29 @@ namespace Sumo.Online
             return fallback;
         }
 
+        private bool GetBoolArgValue(string key, bool fallback)
+        {
+            string raw = GetArgValue(key, null);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return fallback;
+            }
+
+            if (bool.TryParse(raw, out bool value))
+            {
+                return value;
+            }
+
+            if (int.TryParse(raw, out int numericValue))
+            {
+                return numericValue != 0;
+            }
+
+            return string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(raw, "y", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(raw, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
         private struct LaunchParameters
         {
             public string SessionName;
@@ -335,6 +362,7 @@ namespace Sumo.Online
             public int MaxPlayers;
             public int MinimumPlayers;
             public ushort Port;
+            public bool MatchmakingPreconfirmed;
         }
     }
 }

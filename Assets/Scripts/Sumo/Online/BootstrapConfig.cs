@@ -5,7 +5,7 @@ namespace Sumo.Online
     [CreateAssetMenu(fileName = "BootstrapConfig", menuName = "Sumo/Bootstrap Config")]
     public sealed class BootstrapConfig : ScriptableObject
     {
-        public const int TargetMaxPlayers = 10;
+        public const int TargetMaxPlayers = 8;
 
         [Header("Match Defaults")]
         [SerializeField] private string defaultSceneName = "location_test";
@@ -14,13 +14,14 @@ namespace Sumo.Online
         [SerializeField] private ushort defaultServerPort = 27015;
 
         [Header("Mock Matchmaking")]
-        [SerializeField] private bool useMockMatchmakingInEditor = true;
+        [SerializeField] private bool useMockMatchmakingInEditor;
         [SerializeField] private string mockSessionName = "sumo_match_001";
         [SerializeField] private string mockRegion = "local";
         [SerializeField] private string mockMatchId = "match_001";
         [SerializeField] private float mockSearchDelaySeconds = 0.8f;
-        [SerializeField] private float mockWaitForPlayersDelaySeconds = 2.0f;
+        [SerializeField] private float mockWaitForPlayersDelaySeconds = 30.0f;
         [SerializeField] private float mockServerBootDelaySeconds = 1.5f;
+        [SerializeField] private bool mockAutoFillRequiredPlayers;
 
         [Header("Production Matchmaking")]
         [SerializeField] private string productionBackendBaseUrl = "https://your-backend.example.com";
@@ -39,6 +40,7 @@ namespace Sumo.Online
         public float MockSearchDelaySeconds => Mathf.Max(0f, mockSearchDelaySeconds);
         public float MockWaitForPlayersDelaySeconds => Mathf.Max(0f, mockWaitForPlayersDelaySeconds);
         public float MockServerBootDelaySeconds => Mathf.Max(0f, mockServerBootDelaySeconds);
+        public bool MockAutoFillRequiredPlayers => mockAutoFillRequiredPlayers;
 
         public string ProductionBackendBaseUrl => productionBackendBaseUrl;
         public float ProductionPollIntervalSeconds => Mathf.Max(0.2f, productionPollIntervalSeconds);

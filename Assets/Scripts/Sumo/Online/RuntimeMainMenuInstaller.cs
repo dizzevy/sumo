@@ -82,39 +82,28 @@ namespace Sumo.Online
             Canvas canvas = CreateCanvas();
             Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-            GameObject overlay = CreatePanel("Overlay", canvas.transform, new Vector2(0f, 0f), new Vector2(1f, 1f), new Color(0f, 0f, 0f, 0.55f));
+            GameObject overlay = CreatePanel("Overlay", canvas.transform, new Vector2(0f, 0f), new Vector2(1f, 1f), new Color(0.02f, 0.04f, 0.08f, 1f));
 
             GameObject mainPanel = CreatePanel("MainPanel", overlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.08f, 0.1f, 0.15f, 0.95f));
-            SetSize(mainPanel, new Vector2(520f, 380f));
-            AddVerticalLayout(mainPanel, 18, new RectOffset(36, 36, 36, 36), TextAnchor.MiddleCenter);
+            SetSize(mainPanel, new Vector2(620f, 600f));
+            AddVerticalLayout(mainPanel, 14, new RectOffset(36, 36, 34, 34), TextAnchor.MiddleCenter);
 
             CreateLabel("Title", mainPanel.transform, "SUMO", font, 56, TextAnchor.MiddleCenter, Color.white);
             CreateLabel("Subtitle", mainPanel.transform, "Dedicated Multiplayer", font, 24, TextAnchor.MiddleCenter, new Color(0.82f, 0.88f, 0.97f, 1f));
 
-            Button multiplayerButton = CreateButton("MultiplayerButton", mainPanel.transform, "Multiplayer", font);
-            SetButtonHeight(multiplayerButton, 64f);
+            Text statusText = CreateLabel("QueueStatusText", mainPanel.transform, "Idle", font, 28, TextAnchor.MiddleCenter, new Color(0.84f, 0.91f, 1f, 1f));
+
+            Button findButton = CreateButton("FindGameButton", mainPanel.transform, "Find Game", font);
+            SetButtonHeight(findButton, 64f);
+
+            Button cancelButton = CreateButton("CancelSearchButton", mainPanel.transform, "Cancel Search", font);
+            SetButtonHeight(cancelButton, 56f);
 
             Button settingsButton = CreateButton("SettingsButton", mainPanel.transform, "Settings", font);
             SetButtonHeight(settingsButton, 58f);
 
             Button quitButton = CreateButton("QuitButton", mainPanel.transform, "Quit", font);
             SetButtonHeight(quitButton, 58f);
-
-            GameObject multiplayerPanel = CreatePanel("MultiplayerPanel", overlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.08f, 0.1f, 0.15f, 0.95f));
-            SetSize(multiplayerPanel, new Vector2(620f, 420f));
-            AddVerticalLayout(multiplayerPanel, 14, new RectOffset(36, 36, 36, 36), TextAnchor.UpperCenter);
-
-            CreateLabel("MpTitle", multiplayerPanel.transform, "Multiplayer", font, 44, TextAnchor.MiddleCenter, Color.white);
-            Text statusText = CreateLabel("StatusText", multiplayerPanel.transform, "Idle", font, 28, TextAnchor.MiddleCenter, new Color(0.84f, 0.91f, 1f, 1f));
-
-            Button findButton = CreateButton("FindGameButton", multiplayerPanel.transform, "Find Game", font);
-            SetButtonHeight(findButton, 62f);
-
-            Button cancelButton = CreateButton("CancelSearchButton", multiplayerPanel.transform, "Cancel Search", font);
-            SetButtonHeight(cancelButton, 56f);
-
-            Button backButton = CreateButton("BackButton", multiplayerPanel.transform, "Back", font);
-            SetButtonHeight(backButton, 56f);
 
             GameObject settingsPanel = CreatePanel("SettingsPanel", overlay.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Color(0.08f, 0.1f, 0.15f, 0.95f));
             SetSize(settingsPanel, new Vector2(680f, 420f));
@@ -154,13 +143,13 @@ namespace Sumo.Online
             BootstrapConfig bootstrapConfig = Resources.Load<BootstrapConfig>("BootstrapConfig");
 
             matchmakingClient.Configure(bootstrapConfig, connector, false);
-            mainMenuController.Configure(mainPanel, multiplayerPanel, settingsPanel, inGamePanel);
+            mainMenuController.Configure(mainPanel, null, settingsPanel, inGamePanel);
             multiplayerMenuController.Configure(
                 matchmakingClient,
                 mainMenuController,
                 findButton,
                 cancelButton,
-                backButton,
+                null,
                 statusText,
                 canvas);
             settingsMenuController.Configure(
@@ -177,7 +166,6 @@ namespace Sumo.Online
                 inGameSettingsButton,
                 mainMenuButton);
 
-            multiplayerButton.onClick.AddListener(mainMenuController.OpenMultiplayer);
             settingsButton.onClick.AddListener(mainMenuController.OpenSettings);
             quitButton.onClick.AddListener(mainMenuController.QuitGame);
         }
@@ -207,7 +195,7 @@ namespace Sumo.Online
 
             Canvas canvas = canvasObject.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 999;
+            canvas.sortingOrder = 5000;
 
             CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -567,8 +555,7 @@ namespace Sumo.Online
                 menuCanvas.enabled = true;
             }
 
-            if (mainMenuController != null
-                && (mainMenuController.IsInGameMenuOpen || mainMenuController.IsSettingsOpenFromGame))
+            if (mainMenuController != null)
             {
                 mainMenuController.BackToMainMenu();
             }

@@ -21,6 +21,11 @@ namespace Sumo.Online
         public string PlayerId;
         public MatchTicketStatus Status;
         public DateTime CreatedAtUtc;
+        public int PlayersFound;
+        public int RequiredPlayers;
+        public int MaxPlayers;
+        public float CountdownRemainingSeconds;
+        public bool CountdownActive;
 
         public bool IsTerminal => Status == MatchTicketStatus.Cancelled || Status == MatchTicketStatus.Failed;
     }
@@ -39,5 +44,16 @@ namespace Sumo.Online
 
         public bool HasAddress => string.IsNullOrWhiteSpace(Address) == false;
         public bool HasPort => Port.HasValue && Port.Value > 0;
+    }
+
+    [Serializable]
+    public sealed class ServerSearchOptions
+    {
+        public string GameMode = "sumo";
+        public string SceneName = "location_test";
+        public string Region = "auto";
+        public int MaxPlayers = BootstrapConfig.TargetMaxPlayers;
+        public int RequiredPlayers = 2;
+        public float PollIntervalSeconds = 0.5f;
     }
 }

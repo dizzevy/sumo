@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Fusion;
+using Sumo.Gameplay;
 using UnityEngine;
 
 namespace Sumo.Online
@@ -39,6 +40,7 @@ namespace Sumo.Online
         private CancellationTokenSource _searchCts;
         private MatchTicket _activeTicket;
         private Task _currentFlowTask;
+        private ClientFusionConnector _subscribedConnector;
 
         public event Action<MatchmakingClientState, string> StateChanged;
 
@@ -51,6 +53,7 @@ namespace Sumo.Online
             bootstrapConfig = config;
             fusionConnector = connector;
             forceMockMatchmaking = forceMock;
+            SubscribeConnectorEvents();
         }
 
         private void Awake()
@@ -60,6 +63,7 @@ namespace Sumo.Online
                 fusionConnector = GetComponent<ClientFusionConnector>();
             }
 
+            SubscribeConnectorEvents();
             SetState(MatchmakingClientState.Idle, "Idle", true);
         }
 
@@ -74,6 +78,8 @@ namespace Sumo.Online
             {
                 _ = fusionConnector.DisconnectAsync();
             }
+
+            UnsubscribeConnectorEvents();
 
             if (_service is IDisposable disposable)
             {
@@ -108,45 +114,13 @@ namespace Sumo.Online
 
             try
             {
-                if (_service == null)
+                if (forceMockMatchmaking)
                 {
-                    _service = CreateService();
-                }
-
-                SetState(MatchmakingClientState.Searching, "Searching...");
-                _activeTicket = await _service.FindMatchAsync(token);
-
-                if (_activeTicket != null)
-                {
-                    ApplyStateFromTicket(_activeTicket.Status);
-                }
-                else
-                {
-                    SetState(MatchmakingClientState.WaitingForPlayers, "Waiting for players...");
-                }
-
-                ServerConnectionInfo connection = await WaitForServerWithProgressAsync(_activeTicket, token);
-
-                SetState(MatchmakingClientState.MatchFound, "Match found");
-                SetState(MatchmakingClientState.Connecting, "Connecting...");
-
-                if (fusionConnector == null)
-                {
-                    throw new InvalidOperationException("ClientFusionConnector reference is missing.");
-                }
-
-                StartGameResult result = await ConnectWithRetryAsync(connection, token);
-
-                if (result.Ok)
-                {
-                    SetState(MatchmakingClientState.Connected, "Connected");
+                    await RunTicketMatchmakingFlowAsync(token);
                     return;
                 }
 
-                string error = BuildConnectionError(result);
-
-                SetState(MatchmakingClientState.Failed, $"Failed: {error}");
-                await fusionConnector.DisconnectAsync();
+                await RunServerFirstMatchmakingFlowAsync(token);
             }
             catch (OperationCanceledException)
             {
@@ -170,6 +144,152 @@ namespace Sumo.Online
             }
         }
 
+        private async Task RunServerFirstMatchmakingFlowAsync(CancellationToken token)
+        {
+            if (fusionConnector == null)
+            {
+                throw new InvalidOperationException("ClientFusionConnector reference is missing.");
+            }
+
+            SetState(MatchmakingClientState.Searching, "Searching server...");
+
+            ServerConnectionInfo connection = await fusionConnector.FindAvailableServerAsync(BuildServerSearchOptions(), token);
+
+            SetState(MatchmakingClientState.MatchFound, "Server found");
+            SetState(MatchmakingClientState.Connecting, "Connecting to server...");
+
+            StartGameResult result = await ConnectWithRetryAsync(connection, token);
+
+            if (!result.Ok)
+            {
+                string error = BuildConnectionError(result);
+                SetState(MatchmakingClientState.Failed, $"Failed: {error}");
+                await fusionConnector.DisconnectAsync();
+                return;
+            }
+
+            await WaitForConnectedServerMatchStartAsync(connection, token);
+            SetState(MatchmakingClientState.Connected, "Connected");
+        }
+
+        private async Task RunTicketMatchmakingFlowAsync(CancellationToken token)
+        {
+            if (_service == null)
+            {
+                _service = CreateService();
+            }
+
+            SetState(MatchmakingClientState.Searching, "Searching...");
+            _activeTicket = await _service.FindMatchAsync(token);
+
+            if (_activeTicket != null)
+            {
+                ApplyStateFromTicket(_activeTicket);
+            }
+            else
+            {
+                SetState(MatchmakingClientState.WaitingForPlayers, "Waiting for players...");
+            }
+
+            ServerConnectionInfo connection = await WaitForServerWithProgressAsync(_activeTicket, token);
+
+            SetState(MatchmakingClientState.MatchFound, "Match found");
+            SetState(MatchmakingClientState.Connecting, "Connecting...");
+
+            if (fusionConnector == null)
+            {
+                throw new InvalidOperationException("ClientFusionConnector reference is missing.");
+            }
+
+            StartGameResult result = await ConnectWithRetryAsync(connection, token);
+
+            if (result.Ok)
+            {
+                SetState(MatchmakingClientState.Connected, "Connected");
+                return;
+            }
+
+            string error = BuildConnectionError(result);
+
+            SetState(MatchmakingClientState.Failed, $"Failed: {error}");
+            await fusionConnector.DisconnectAsync();
+        }
+
+        private async Task WaitForConnectedServerMatchStartAsync(ServerConnectionInfo connection, CancellationToken token)
+        {
+            int pollDelayMs = Mathf.Max(50, Mathf.RoundToInt(statusPollIntervalSeconds * 1000f));
+
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+
+                MatchRoundManager roundManager = FindObjectOfType<MatchRoundManager>(true);
+                if (roundManager == null
+                    || roundManager.Runner == null
+                    || !roundManager.TryGetState(out MatchState state))
+                {
+                    SetState(MatchmakingClientState.WaitingForPlayers, "Server found. Joining players...");
+                    await Task.Delay(pollDelayMs, token);
+                    continue;
+                }
+
+                if (state != MatchState.WaitingForPlayers)
+                {
+                    return;
+                }
+
+                MatchTicket queueProgress = BuildConnectedQueueProgress(roundManager, connection);
+                SetState(MatchmakingClientState.WaitingForPlayers, BuildQueueProgressText(queueProgress, "Waiting for players..."));
+                await Task.Delay(pollDelayMs, token);
+            }
+        }
+
+        private MatchTicket BuildConnectedQueueProgress(MatchRoundManager roundManager, ServerConnectionInfo connection)
+        {
+            int maxPlayers = roundManager != null
+                ? roundManager.MaximumPlayersPerMatch
+                : (connection != null ? connection.MaxPlayers : ResolveMaxPlayers(null));
+
+            return new MatchTicket
+            {
+                Status = MatchTicketStatus.WaitingForPlayers,
+                PlayersFound = CountActivePlayers(roundManager != null ? roundManager.Runner : null),
+                RequiredPlayers = roundManager != null ? roundManager.MinimumPlayersToStart : ResolveRequiredPlayers(null),
+                MaxPlayers = maxPlayers,
+                CountdownActive = roundManager != null && roundManager.IsWaitingForMorePlayersCountdownActive,
+                CountdownRemainingSeconds = roundManager != null ? roundManager.WaitingForMorePlayersRemainingTime : 0f
+            };
+        }
+
+        private ServerSearchOptions BuildServerSearchOptions()
+        {
+            return new ServerSearchOptions
+            {
+                GameMode = "sumo",
+                SceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "location_test",
+                Region = bootstrapConfig != null ? bootstrapConfig.MockRegion : "auto",
+                MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
+                RequiredPlayers = bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2,
+                PollIntervalSeconds = statusPollIntervalSeconds
+            };
+        }
+
+        private static int CountActivePlayers(NetworkRunner runner)
+        {
+            if (runner == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (PlayerRef _ in runner.ActivePlayers)
+            {
+                count++;
+            }
+
+            return count;
+        }
+
         private async Task<ServerConnectionInfo> WaitForServerWithProgressAsync(MatchTicket ticket, CancellationToken token)
         {
             if (ticket == null)
@@ -178,20 +298,14 @@ namespace Sumo.Online
             }
 
             Task<ServerConnectionInfo> waitTask = _service.WaitForServerAsync(ticket, token);
-            MatchTicketStatus lastTicketStatus = ticket.Status;
-            ApplyStateFromTicket(lastTicketStatus);
+            ApplyStateFromTicket(ticket);
 
             int pollDelayMs = Mathf.Max(50, Mathf.RoundToInt(statusPollIntervalSeconds * 1000f));
 
             while (waitTask.IsCompleted == false)
             {
                 token.ThrowIfCancellationRequested();
-
-                if (ticket.Status != lastTicketStatus)
-                {
-                    lastTicketStatus = ticket.Status;
-                    ApplyStateFromTicket(lastTicketStatus);
-                }
+                ApplyStateFromTicket(ticket);
 
                 await Task.Delay(pollDelayMs, token);
             }
@@ -270,9 +384,11 @@ namespace Sumo.Online
                     Region = bootstrapConfig != null ? bootstrapConfig.MockRegion : "local",
                     SceneName = bootstrapConfig != null ? bootstrapConfig.DefaultSceneName : "location_test",
                     MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
+                    RequiredPlayers = bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2,
                     SearchDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockSearchDelaySeconds : 0.8f,
-                    WaitForPlayersDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockWaitForPlayersDelaySeconds : 2f,
-                    ServerBootDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockServerBootDelaySeconds : 1.5f
+                    WaitForPlayersDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockWaitForPlayersDelaySeconds : 30f,
+                    ServerBootDelaySeconds = bootstrapConfig != null ? bootstrapConfig.MockServerBootDelaySeconds : 1.5f,
+                    AutoFillRequiredPlayers = bootstrapConfig != null && bootstrapConfig.MockAutoFillRequiredPlayers
                 };
 
                 return new MockMatchmakingService(settings);
@@ -345,15 +461,22 @@ namespace Sumo.Online
             return playerId;
         }
 
-        private void ApplyStateFromTicket(MatchTicketStatus status)
+        private void ApplyStateFromTicket(MatchTicket ticket)
         {
+            if (ticket == null)
+            {
+                SetState(MatchmakingClientState.WaitingForPlayers, "Waiting for players...");
+                return;
+            }
+
+            MatchTicketStatus status = ticket.Status;
             switch (status)
             {
                 case MatchTicketStatus.Searching:
-                    SetState(MatchmakingClientState.Searching, "Searching...");
+                    SetState(MatchmakingClientState.Searching, BuildQueueProgressText(ticket, "Finding players..."));
                     break;
                 case MatchTicketStatus.WaitingForPlayers:
-                    SetState(MatchmakingClientState.WaitingForPlayers, "Waiting for players...");
+                    SetState(MatchmakingClientState.WaitingForPlayers, BuildQueueProgressText(ticket, "Waiting for players..."));
                     break;
                 case MatchTicketStatus.MatchFound:
                     SetState(MatchmakingClientState.MatchFound, "Match found");
@@ -373,6 +496,46 @@ namespace Sumo.Online
                 default:
                     break;
             }
+        }
+
+        private string BuildQueueProgressText(MatchTicket ticket, string fallback)
+        {
+            int requiredPlayers = ResolveRequiredPlayers(ticket);
+            int maxPlayers = Mathf.Max(requiredPlayers, ResolveMaxPlayers(ticket));
+            int playersFound = Mathf.Clamp(ticket != null ? ticket.PlayersFound : 0, 0, maxPlayers);
+
+            if (ticket != null && ticket.CountdownActive)
+            {
+                int seconds = Mathf.Max(0, Mathf.CeilToInt(ticket.CountdownRemainingSeconds));
+                return $"Players: {playersFound}/{maxPlayers} (min {requiredPlayers}) | Start in: {seconds}s";
+            }
+
+            if (ticket != null && (ticket.PlayersFound > 0 || ticket.RequiredPlayers > 0))
+            {
+                return $"Find players: {playersFound}/{maxPlayers} (min {requiredPlayers})";
+            }
+
+            return fallback;
+        }
+
+        private int ResolveRequiredPlayers(MatchTicket ticket)
+        {
+            if (ticket != null && ticket.RequiredPlayers > 0)
+            {
+                return Mathf.Max(2, ticket.RequiredPlayers);
+            }
+
+            return bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2;
+        }
+
+        private int ResolveMaxPlayers(MatchTicket ticket)
+        {
+            if (ticket != null && ticket.MaxPlayers > 0)
+            {
+                return Mathf.Clamp(ticket.MaxPlayers, 2, BootstrapConfig.TargetMaxPlayers);
+            }
+
+            return bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers;
         }
 
         private void SetState(MatchmakingClientState state, string text, bool forceNotify = false)
@@ -398,6 +561,43 @@ namespace Sumo.Online
 
             _searchCts.Dispose();
             _searchCts = null;
+        }
+
+        private void SubscribeConnectorEvents()
+        {
+            if (_subscribedConnector == fusionConnector)
+            {
+                return;
+            }
+
+            UnsubscribeConnectorEvents();
+
+            if (fusionConnector == null)
+            {
+                return;
+            }
+
+            fusionConnector.ConnectionClosed += OnFusionConnectionClosed;
+            _subscribedConnector = fusionConnector;
+        }
+
+        private void UnsubscribeConnectorEvents()
+        {
+            if (_subscribedConnector == null)
+            {
+                return;
+            }
+
+            _subscribedConnector.ConnectionClosed -= OnFusionConnectionClosed;
+            _subscribedConnector = null;
+        }
+
+        private void OnFusionConnectionClosed()
+        {
+            if (CurrentState == MatchmakingClientState.Connected)
+            {
+                SetState(MatchmakingClientState.Idle, "Idle");
+            }
         }
     }
 }

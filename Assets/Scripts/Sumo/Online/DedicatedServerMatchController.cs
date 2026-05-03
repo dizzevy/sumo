@@ -19,6 +19,7 @@ namespace Sumo.Online
         [SerializeField] private int minimumPlayersToStart = 2;
         [SerializeField] private bool spawnOnlyWhenMinimumPlayersReached;
         [SerializeField] private bool shutdownWhenPlayersDropBelowMinimum;
+        [SerializeField] private bool externalMatchmakingPreconfirmed;
 
         [Header("Spawn")]
         [SerializeField] private Vector3 fallbackSpawnCenter = Vector3.zero;
@@ -37,12 +38,18 @@ namespace Sumo.Online
         private int _spawnCursor;
         private bool _loggedFallbackSpawnWarning;
 
-        public void Initialize(NetworkRunner runnerInstance, NetworkPrefabRef prefab, int minimumPlayers, bool shutdownOnLowPlayerCount)
+        public void Initialize(
+            NetworkRunner runnerInstance,
+            NetworkPrefabRef prefab,
+            int minimumPlayers,
+            bool shutdownOnLowPlayerCount,
+            bool matchmakingPreconfirmed)
         {
             runner = runnerInstance;
             playerPrefab = prefab;
             minimumPlayersToStart = Mathf.Max(2, minimumPlayers);
             shutdownWhenPlayersDropBelowMinimum = shutdownOnLowPlayerCount;
+            externalMatchmakingPreconfirmed = matchmakingPreconfirmed;
             RegisterCallbacks();
         }
 
@@ -402,7 +409,15 @@ namespace Sumo.Online
             }
 
             _matchStarted = true;
-            Debug.Log("DedicatedServerMatchController: minimum players reached, match started.");
+            ResolveRoundManagerIfNeeded();
+            if (externalMatchmakingPreconfirmed && roundManager != null)
+            {
+                roundManager.ServerConfirmMatchmakingStart(minimumPlayersToStart);
+                Debug.Log("DedicatedServerMatchController: external matchmaking confirmed, match started immediately.");
+                return;
+            }
+
+            Debug.Log("DedicatedServerMatchController: minimum players reached, server lobby countdown armed.");
         }
 
         private bool HasMinimumPlayers(NetworkRunner runnerInstance)
