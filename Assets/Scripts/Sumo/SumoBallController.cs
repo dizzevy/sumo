@@ -147,6 +147,7 @@ namespace Sumo
         public Vector3 CurrentMoveDirection => _currentMoveDirection;
         public float CurrentSpeed01 => _currentSpeed01;
         public float MaxSpeed => GetMaxSpeed();
+        public float CombatReferenceTopSpeed => GetCombatReferenceTopSpeed();
         public bool IsDashing => _isDashing;
         public float DashPower => _dashPower;
         public Tick LastDashTick => _lastDashTick;
@@ -1143,15 +1144,21 @@ namespace Sumo
 
             if (pressedThisTick)
             {
+                bool startedAbility = false;
                 if (IsAbilityReady(AbilityStamina01, AbilityActive))
                 {
                     AbilityActive = true;
                     AbilityStamina01 = FullAbilityStamina;
+                    startedAbility = true;
                 }
 
                 if (selectedClass == SumoPlayerClass.Jumper && AbilityActive && grounded)
                 {
                     TryApplyJumperJump(definition);
+                }
+                else if (selectedClass == SumoPlayerClass.Fatso && startedAbility)
+                {
+                    ApplyFatsoActivationBurst(definition);
                 }
             }
 
@@ -1355,6 +1362,21 @@ namespace Sumo
             return true;
         }
 
+        private void ApplyFatsoActivationBurst(SumoPlayerClassDefinition definition)
+        {
+            if (definition.Class != SumoPlayerClass.Fatso)
+            {
+                return;
+            }
+
+            if (_collisionController == null)
+            {
+                CacheComponents();
+            }
+
+            _collisionController?.ApplyFatsoActivationBurst();
+        }
+
         private SumoPlayerClass ResolveSelectedPlayerClass()
         {
             if (_roundState == null)
@@ -1481,7 +1503,7 @@ namespace Sumo
                 return 0f;
             }
 
-            return Mathf.Clamp01(SumoPlayerClassCatalog.GetDefinition(playerClass).PushSpeedFloorShare);
+            return Mathf.Clamp(SumoPlayerClassCatalog.GetDefinition(playerClass).PushSpeedFloorShare, 0f, 2f);
         }
 
         private float ResolveShoveForceFloor()
@@ -1519,10 +1541,7 @@ namespace Sumo
 
         private float GetMaxSpeed()
         {
-            float baseMaxSpeed = accelerationConfig != null
-                ? accelerationConfig.MaxSpeed
-                : FallbackMaxSpeed;
-            return baseMaxSpeed * GetMovementSpeedMultiplier();
+            return GetCombatReferenceTopSpeed() * GetClassSpeedMultiplier();
         }
 
         private float GetMinMoveSpeed()
@@ -1560,7 +1579,7 @@ namespace Sumo
             float baseBraking = accelerationConfig != null
                 ? accelerationConfig.Braking
                 : FallbackBraking;
-            return baseBraking * GetMovementSpeedMultiplier();
+            return baseBraking * GetBrakingMultiplier();
         }
 
         private float GetHardBrakeMultiplier()
@@ -1589,6 +1608,22 @@ namespace Sumo
             float configured = movementSpeedMultiplier > 0.0001f
                 ? movementSpeedMultiplier
                 : DefaultMovementSpeedMultiplier;
+            return Mathf.Max(0.01f, configured * GetClassSpeedMultiplier());
+        }
+
+        private float GetCombatReferenceTopSpeed()
+        {
+            float baseMaxSpeed = accelerationConfig != null
+                ? accelerationConfig.MaxSpeed
+                : FallbackMaxSpeed;
+            float configured = movementSpeedMultiplier > 0.0001f
+                ? movementSpeedMultiplier
+                : DefaultMovementSpeedMultiplier;
+            return Mathf.Max(0.01f, baseMaxSpeed * configured);
+        }
+
+        private float GetClassSpeedMultiplier()
+        {
             float classMultiplier = 1f;
             SumoPlayerClass playerClass = GetSimulationPlayerClass();
             if (playerClass == SumoPlayerClass.Fatso && GetSimulationAbilityActive())
@@ -1596,7 +1631,21 @@ namespace Sumo
                 classMultiplier = SumoPlayerClassCatalog.GetDefinition(playerClass).SpeedMultiplier;
             }
 
-            return Mathf.Max(0.01f, configured * Mathf.Max(0.01f, classMultiplier));
+            return Mathf.Max(0.01f, classMultiplier);
+        }
+
+        private float GetBrakingMultiplier()
+        {
+            float configured = movementSpeedMultiplier > 0.0001f
+                ? movementSpeedMultiplier
+                : DefaultMovementSpeedMultiplier;
+            SumoPlayerClass playerClass = GetSimulationPlayerClass();
+            if (playerClass == SumoPlayerClass.Fatso && GetSimulationAbilityActive())
+            {
+                return Mathf.Max(0.01f, configured);
+            }
+
+            return GetMovementSpeedMultiplier();
         }
 
         private Vector3 GetTargetHorizontalVelocity(Vector2 moveInput, float cameraYaw)

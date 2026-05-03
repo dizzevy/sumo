@@ -293,6 +293,14 @@ namespace Sumo
         private const float ActiveCombatPenetrationSlopBonus = 0.008f;
         private const int PredictedRollbackHistoryTicks = 192;
         private const float LowTierRamSeedEnergyPadding = 0.01f;
+        private const float FatsoActivationBurstContactPadding = 0.55f;
+        private const float FatsoActivationBurstTightContactPadding = 0.08f;
+        private const float FatsoActivationBurstMinDirectionDot = 0.18f;
+        private const float FatsoActivationBurstDeltaV = 13f;
+        private const float FatsoActivationBurstTargetSpeed = 18f;
+        private const float FatsoActivationBurstAcceleration = 65f;
+        private const float FatsoActivationBurstForceMultiplier = 5f;
+        private const float FatsoActivationBurstMinStrength = 0.62f;
 
         private void Awake()
         {
@@ -1275,6 +1283,112 @@ namespace Sumo
             return NetworkVictimPushPhase == PushPhaseImpact;
         }
 
+        public int ApplyFatsoActivationBurst()
+        {
+            CacheComponents();
+            RegisterActiveController();
+
+            if (!CanApplyGameplayForces(this, SimulationMode.Authoritative)
+                || Runner == null
+                || _rigidbody == null)
+            {
+                return 0;
+            }
+
+            int selfKey = GetControllerKey(this);
+            if (selfKey == 0)
+            {
+                return 0;
+            }
+
+            int currentTick = Runner.Tick.Raw;
+            Vector3 selfCenter = _rigidbody.worldCenterOfMass;
+            float selfRadius = GetScaledRadius(this);
+            int affectedCount = 0;
+
+            foreach (KeyValuePair<int, SumoCollisionController> entry in ActiveControllers)
+            {
+                SumoCollisionController other = entry.Value;
+                int otherKey = entry.Key;
+                if (other == null
+                    || other == this
+                    || otherKey == 0
+                    || otherKey == selfKey
+                    || other.Runner != Runner)
+                {
+                    continue;
+                }
+
+                if (other._rigidbody == null || other._sphereCollider == null || other.ballController == null)
+                {
+                    other.CacheComponents();
+                }
+
+                if (!CanApplyGameplayForces(other, SimulationMode.Authoritative))
+                {
+                    continue;
+                }
+
+                int otherLayerMask = 1 << other.gameObject.layer;
+                int selfLayerMask = 1 << gameObject.layer;
+                bool layerAllowed = (playerMask.value & otherLayerMask) != 0
+                    || (other.playerMask.value & selfLayerMask) != 0;
+                if (!layerAllowed)
+                {
+                    continue;
+                }
+
+                Vector3 otherCenter = other._rigidbody.worldCenterOfMass;
+                Vector3 burstDirection = ResolveDirection(selfCenter, otherCenter, _rigidbody.linearVelocity);
+                float centerDistance = Vector3.Distance(selfCenter, otherCenter);
+                float combinedRadius = selfRadius + GetScaledRadius(other);
+                float edgeSeparation = centerDistance - combinedRadius;
+                float contactPadding = Mathf.Max(
+                    FatsoActivationBurstContactPadding,
+                    GetPairContactEnterPadding(this, other) + 0.18f);
+                if (edgeSeparation > contactPadding)
+                {
+                    continue;
+                }
+
+                float tightContactPadding = Mathf.Max(
+                    FatsoActivationBurstTightContactPadding,
+                    GetPairContactEnterPadding(this, other) + 0.04f);
+                float directionDot = ComputeDirectionDot(this, _rigidbody.linearVelocity, burstDirection);
+                bool isTightContact = edgeSeparation <= tightContactPadding;
+                if (!isTightContact && directionDot < FatsoActivationBurstMinDirectionDot)
+                {
+                    continue;
+                }
+
+                float contact01 = edgeSeparation <= 0f
+                    ? 1f
+                    : 1f - Mathf.Clamp01(edgeSeparation / contactPadding);
+                float press01 = Mathf.Clamp01(Mathf.Max(directionDot, isTightContact ? 0.5f : 0f));
+                float strength = Mathf.Clamp(
+                    contact01 * Mathf.Lerp(0.78f, 1f, press01),
+                    FatsoActivationBurstMinStrength,
+                    1f);
+
+                ApplyVelocityDelta(other, burstDirection * (FatsoActivationBurstDeltaV * strength), SimulationMode.Authoritative);
+                other._rigidbody.WakeUp();
+
+                PublishVictimPush(
+                    other,
+                    PushPhaseImpact,
+                    burstDirection,
+                    FatsoActivationBurstTargetSpeed * strength,
+                    FatsoActivationBurstAcceleration * strength,
+                    1f,
+                    FatsoActivationBurstForceMultiplier,
+                    currentTick);
+
+                affectedCount++;
+            }
+
+            return affectedCount;
+        }
+
         public static bool TryGetLocalVictimPresentationAssist(NetworkRunner runner, out float assist01)
         {
             assist01 = 0f;
@@ -2029,8 +2143,8 @@ namespace Sumo
             }
 
             Vector3 direction = firstToSecond.normalized;
-            float firstInvMass = CanApplyForces(first, mode) ? 1f / Mathf.Max(0.01f, first._rigidbody.mass) : 0f;
-            float secondInvMass = CanApplyForces(second, mode) ? 1f / Mathf.Max(0.01f, second._rigidbody.mass) : 0f;
+            float firstInvMass = GetContactInverseMass(first, mode, false);
+            float secondInvMass = GetContactInverseMass(second, mode, false);
             float invMassSum = firstInvMass + secondInvMass;
             if (invMassSum <= 0.0001f)
             {
@@ -2100,7 +2214,7 @@ namespace Sumo
                 return;
             }
 
-            controller._rigidbody.linearVelocity += velocityDelta;
+            controller._rigidbody.linearVelocity += velocityDelta * GetClassIncomingVelocityMultiplier(controller);
         }
 
         private static void ApplyPositionDelta(SumoCollisionController controller, Vector3 positionDelta, SimulationMode mode)
@@ -2161,7 +2275,34 @@ namespace Sumo
                 return 0f;
             }
 
-            return 1f / Mathf.Max(0.01f, controller._rigidbody.mass);
+            return (1f / Mathf.Max(0.01f, controller._rigidbody.mass))
+                * GetClassContactInverseMassMultiplier(controller);
+        }
+
+        private static float GetClassIncomingVelocityMultiplier(SumoCollisionController controller)
+        {
+            return ResolveClassIncomingResponseMultiplier(controller);
+        }
+
+        private static float GetClassContactInverseMassMultiplier(SumoCollisionController controller)
+        {
+            return ResolveClassIncomingResponseMultiplier(controller);
+        }
+
+        private static float ResolveClassIncomingResponseMultiplier(SumoCollisionController controller)
+        {
+            if (controller == null || controller.ballController == null)
+            {
+                return 1f;
+            }
+
+            float multiplier = controller.ballController.ClassIncomingPushMultiplier;
+            if (float.IsNaN(multiplier) || float.IsInfinity(multiplier) || multiplier <= 0f)
+            {
+                return 1f;
+            }
+
+            return Mathf.Clamp(multiplier, 0.02f, 1f);
         }
 
         private static bool CanApplyForces(SumoCollisionController controller, SimulationMode mode)
@@ -4398,10 +4539,10 @@ namespace Sumo
 
             float combatMultiplier = Mathf.Max(1f, source.ballController.ClassCombatSpeedMultiplier);
             float adjustedSpeed = sanitizedSpeed * combatMultiplier;
-            float floorShare = Mathf.Clamp01(source.ballController.ClassPushSpeedFloorShare);
+            float floorShare = Mathf.Clamp(source.ballController.ClassPushSpeedFloorShare, 0f, 2f);
             if (floorShare > 0f)
             {
-                float normalReferenceSpeed = GetAttackerTierReferenceTopSpeed(source) * combatMultiplier;
+                float normalReferenceSpeed = GetAttackerTierReferenceTopSpeed(source);
                 adjustedSpeed = Mathf.Max(adjustedSpeed, normalReferenceSpeed * floorShare);
             }
 
@@ -4599,11 +4740,6 @@ namespace Sumo
                 multiplier = Mathf.Max(multiplier, attacker.ballController.ClassShoveForceFloor);
             }
 
-            if (victim != null && victim.ballController != null)
-            {
-                multiplier *= victim.ballController.ClassIncomingPushMultiplier;
-            }
-
             return ResolveAppliedShoveForceMultiplier(multiplier);
         }
 
@@ -4686,7 +4822,7 @@ namespace Sumo
         private static float GetAttackerTierReferenceTopSpeed(SumoCollisionController attacker)
         {
             float ballTopSpeed = attacker != null && attacker.ballController != null
-                ? Mathf.Max(0.01f, attacker.ballController.MaxSpeed)
+                ? Mathf.Max(0.01f, attacker.ballController.CombatReferenceTopSpeed)
                 : FallbackAttackerReferenceTopSpeed;
             float maxImpactSpeed = attacker != null && attacker.physicsConfig != null
                 ? Mathf.Max(0.01f, attacker.physicsConfig.MaxImpactSpeed)
@@ -4911,7 +5047,9 @@ namespace Sumo
                 return;
             }
 
-            controller._rigidbody.AddForce(impulse, ForceMode.Impulse);
+            controller._rigidbody.AddForce(
+                impulse * GetClassIncomingVelocityMultiplier(controller),
+                ForceMode.Impulse);
         }
 
         private static void ApplyAcceleration(SumoCollisionController controller, Vector3 acceleration, SimulationMode mode)
@@ -4926,7 +5064,9 @@ namespace Sumo
                 return;
             }
 
-            controller._rigidbody.AddForce(acceleration, ForceMode.Acceleration);
+            controller._rigidbody.AddForce(
+                acceleration * GetClassIncomingVelocityMultiplier(controller),
+                ForceMode.Acceleration);
         }
 
         private static Vector3 ResolveDirection(Vector3 from, Vector3 to, Vector3 fallbackNormal)

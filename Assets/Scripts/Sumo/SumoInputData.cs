@@ -103,7 +103,7 @@ namespace Sumo
             "Fatso",
             "Giant Size",
             "A heavy ball that becomes huge and hard to move.",
-            "Ability: size x3\nSpeed: x1/3 while active\nIncoming push: x0.15\nOutgoing push: x5\nActive: 10s\nRecharge: 30s",
+            "Ability: size x3\nSpeed: x1/3 while active\nIncoming push: x0.30\nOutgoing push: x5\nContact burst on activation\nActive: 10s\nRecharge: 30s",
             new Color(1f, 0.54f, 0.16f, 1f),
             10f,
             30f,
@@ -111,8 +111,8 @@ namespace Sumo
             3f,
             1f / 3f,
             5f,
-            0.15f,
-            0.9f,
+            0.30f,
+            1.35f,
             5f);
 
         public static int Count => 2;
