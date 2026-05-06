@@ -19,6 +19,8 @@ namespace Sumo.Gameplay
 
         private bool _hasAppliedState;
         private bool _lastAppliedClosed;
+        private bool _loggedColliderRecovery;
+        private bool _loggedRendererRecovery;
 
         public override void Spawned()
         {
@@ -44,15 +46,46 @@ namespace Sumo.Gameplay
 
         private void CacheComponentsIfNeeded()
         {
-            if (autoFindColliders && (controlledColliders == null || controlledColliders.Length == 0))
+            if (autoFindColliders && NeedsComponentRefresh(controlledColliders))
             {
+                if (controlledColliders != null && controlledColliders.Length > 0 && !_loggedColliderRecovery)
+                {
+                    Debug.LogWarning($"{nameof(DropFloorController)} on {name}: controlled collider references contained missing entries; rebuilding from children.");
+                    _loggedColliderRecovery = true;
+                }
+
                 controlledColliders = GetComponentsInChildren<Collider>(includeInactive: true);
             }
 
-            if (autoFindRenderers && (controlledRenderers == null || controlledRenderers.Length == 0))
+            if (autoFindRenderers && NeedsComponentRefresh(controlledRenderers))
             {
+                if (controlledRenderers != null && controlledRenderers.Length > 0 && !_loggedRendererRecovery)
+                {
+                    Debug.LogWarning($"{nameof(DropFloorController)} on {name}: controlled renderer references contained missing entries; rebuilding from children.");
+                    _loggedRendererRecovery = true;
+                }
+
                 controlledRenderers = GetComponentsInChildren<Renderer>(includeInactive: true);
             }
+        }
+
+        private static bool NeedsComponentRefresh<T>(T[] components) where T : Component
+        {
+            if (components == null || components.Length == 0)
+            {
+                return true;
+            }
+
+            int validCount = 0;
+            for (int i = 0; i < components.Length; i++)
+            {
+                if (components[i] != null)
+                {
+                    validCount++;
+                }
+            }
+
+            return validCount == 0 || validCount < components.Length;
         }
 
         private void ApplyStateIfChanged(bool force)

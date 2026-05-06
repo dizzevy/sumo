@@ -419,6 +419,56 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
+--- !u!21 &186318401
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SafeZoneFillMaterial
+  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _SURFACE_TYPE_TRANSPARENT
+  m_InvalidKeywords:
+  - _ALPHABLEND_ON
+  - _EMISSION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Blend: 0
+    - _Cull: 0
+    - _Cutoff: 0.02
+    - _DstBlend: 10
+    - _HalftoneScale: 11
+    - _HalftoneStrength: 0.18
+    - _InkWidth: 1.6
+    - _ShadeSteps: 3
+    - _SrcBlend: 5
+    - _Surface: 1
+    - _ZWrite: 0
+    m_Colors:
+    - _BaseColor: {r: 0.14, g: 0.78, b: 1, a: 0.12}
+    - _Color: {r: 0.14, g: 0.78, b: 1, a: 0.12}
+    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.5}
+    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!1001 &195946028
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -476,63 +526,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
---- !u!21 &203514137
-Material:
-  serializedVersion: 8
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneBoundaryMaterial
-  m_Shader: {fileID: 4800000, guid: 650dd9526735d5b46b79224bc6e94025, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords:
-  - _SURFACE_TYPE_TRANSPARENT
-  m_InvalidKeywords:
-  - _ALPHABLEND_ON
-  - _EMISSION
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 3000
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _MainTex:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats:
-    - _AddPrecomputedVelocity: 0
-    - _AlphaClip: 0
-    - _AlphaToMask: 0
-    - _Blend: 0
-    - _BlendOp: 0
-    - _Cull: 0
-    - _Cutoff: 0.5
-    - _DstBlend: 10
-    - _DstBlendAlpha: 0
-    - _QueueOffset: 0
-    - _SampleGI: 0
-    - _SrcBlend: 5
-    - _SrcBlendAlpha: 1
-    - _Surface: 1
-    - _XRMotionVectorsPass: 1
-    - _ZWrite: 0
-    m_Colors:
-    - _BaseColor: {r: 0.62, g: 0.95, b: 1, a: 0.34}
-    - _Color: {r: 0.62, g: 0.95, b: 1, a: 0.34}
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
 --- !u!1 &280815664
 GameObject:
   m_ObjectHideFlags: 0
@@ -5739,7 +5732,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 1020416531}
+  - {fileID: 1737891905}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6357,63 +6350,6 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: -5741174448488666723, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
---- !u!21 &779453372
-Material:
-  serializedVersion: 8
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneFillMaterial
-  m_Shader: {fileID: 4800000, guid: 650dd9526735d5b46b79224bc6e94025, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords:
-  - _SURFACE_TYPE_TRANSPARENT
-  m_InvalidKeywords:
-  - _ALPHABLEND_ON
-  - _EMISSION
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 3000
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _MainTex:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats:
-    - _AddPrecomputedVelocity: 0
-    - _AlphaClip: 0
-    - _AlphaToMask: 0
-    - _Blend: 0
-    - _BlendOp: 0
-    - _Cull: 0
-    - _Cutoff: 0.5
-    - _DstBlend: 10
-    - _DstBlendAlpha: 0
-    - _QueueOffset: 0
-    - _SampleGI: 0
-    - _SrcBlend: 5
-    - _SrcBlendAlpha: 1
-    - _Surface: 1
-    - _XRMotionVectorsPass: 1
-    - _ZWrite: 0
-    m_Colors:
-    - _BaseColor: {r: 0.14, g: 0.78, b: 1, a: 0.12}
-    - _Color: {r: 0.14, g: 0.78, b: 1, a: 0.12}
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
 --- !u!1001 &781476093
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -6674,6 +6610,55 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1274518054}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &910000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 910000002}
+  - component: {fileID: 910000003}
+  m_Layer: 0
+  m_Name: ComicVisualController
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &910000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 910000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &910000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 910000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f981c5a117914e85af960b739eb2db4a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  applyOnAwake: 1
+  includeInactive: 0
+  skipDynamicGameplayObjects: 1
+  preserveSourceHue: 1
+  addMotionDriversToRigidbodies: 0
 --- !u!1001 &959399412
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -6842,83 +6827,6 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 8385836491182413749, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
---- !u!21 &1020416531
-Material:
-  serializedVersion: 8
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneParticlesMaterial
-  m_Shader: {fileID: 4800000, guid: 0406db5a14f94604a8c57ccfbc9f3b46, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords:
-  - _EMISSION
-  - _SURFACE_TYPE_TRANSPARENT
-  m_InvalidKeywords:
-  - _ALPHABLEND_ON
-  - _FLIPBOOKBLENDING_OFF
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 3000
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _BumpMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    - _EmissionMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats:
-    - _AlphaClip: 0
-    - _AlphaToMask: 0
-    - _Blend: 0
-    - _BlendOp: 0
-    - _CameraFadingEnabled: 0
-    - _CameraFarFadeDistance: 2
-    - _CameraNearFadeDistance: 1
-    - _ColorMode: 0
-    - _Cull: 0
-    - _Cutoff: 0.5
-    - _DistortionBlend: 0.5
-    - _DistortionEnabled: 0
-    - _DistortionStrength: 1
-    - _DistortionStrengthScaled: 0.1
-    - _DstBlend: 10
-    - _DstBlendAlpha: 0
-    - _FlipbookBlending: 0
-    - _FlipbookMode: 0
-    - _Mode: 3
-    - _QueueOffset: 0
-    - _SoftParticlesEnabled: 0
-    - _SoftParticlesFarFadeDistance: 1
-    - _SoftParticlesNearFadeDistance: 0
-    - _SrcBlend: 5
-    - _SrcBlendAlpha: 1
-    - _Surface: 1
-    - _ZWrite: 0
-    m_Colors:
-    - _BaseColor: {r: 0.75, g: 0.92, b: 1, a: 0.5}
-    - _BaseColorAddSubDiff: {r: 0, g: 0, b: 0, a: 0}
-    - _CameraFadeParams: {r: 0, g: 0, b: 0, a: 0}
-    - _Color: {r: 0.75, g: 0.92, b: 1, a: 0.5}
-    - _EmissionColor: {r: 1.0125, g: 1.2420001, b: 1.35, a: 0.675}
-    - _SoftParticleFadeParams: {r: 0, g: 0, b: 0, a: 0}
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
 --- !u!1 &1087301929 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -2045257923548263128, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
@@ -7187,7 +7095,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 203514137}
+  - {fileID: 1635559781}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -8031,6 +7939,56 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
+--- !u!21 &1635559781
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SafeZoneBoundaryMaterial
+  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _SURFACE_TYPE_TRANSPARENT
+  m_InvalidKeywords:
+  - _ALPHABLEND_ON
+  - _EMISSION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Blend: 0
+    - _Cull: 0
+    - _Cutoff: 0.02
+    - _DstBlend: 10
+    - _HalftoneScale: 11
+    - _HalftoneStrength: 0.18
+    - _InkWidth: 1.6
+    - _ShadeSteps: 3
+    - _SrcBlend: 5
+    - _Surface: 1
+    - _ZWrite: 0
+    m_Colors:
+    - _BaseColor: {r: 0.62, g: 0.95, b: 1, a: 0.34}
+    - _Color: {r: 0.62, g: 0.95, b: 1, a: 0.34}
+    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.72}
+    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!1 &1677777058
 GameObject:
   m_ObjectHideFlags: 0
@@ -8074,7 +8032,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 779453372}
+  - {fileID: 186318401}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -8278,6 +8236,56 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 8552134717624371188, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
+--- !u!21 &1737891905
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SafeZoneParticlesMaterial
+  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _SURFACE_TYPE_TRANSPARENT
+  m_InvalidKeywords:
+  - _ALPHABLEND_ON
+  - _EMISSION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Blend: 0
+    - _Cull: 0
+    - _Cutoff: 0.02
+    - _DstBlend: 10
+    - _HalftoneScale: 11
+    - _HalftoneStrength: 0.18
+    - _InkWidth: 1.6
+    - _ShadeSteps: 3
+    - _SrcBlend: 5
+    - _Surface: 1
+    - _ZWrite: 0
+    m_Colors:
+    - _BaseColor: {r: 0.75, g: 0.92, b: 1, a: 0.5}
+    - _Color: {r: 0.75, g: 0.92, b: 1, a: 0.5}
+    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.88}
+    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!1 &1747514603
 GameObject:
   m_ObjectHideFlags: 0
@@ -8320,11 +8328,17 @@ MonoBehaviour:
   maximumPlayersPerMatch: 8
   waitingForMorePlayersSeconds: 30
   closeSessionForLateJoinAfterRoundLock: 1
+  startFirstRoundImmediatelyAfterMatchmaking: 1
+  winsToFinishMatch: 3
+  scoreboardDisplaySeconds: 4
+  finalScoreDisplaySeconds: 5
+  shutdownServerAfterFinalScore: 1
   spawnNpcsAtRoundStart: 1
   minimumNpcsPerRound: 1
   npcStopStartBind: 116
   resetNpcMovementOnRoundStart: 1
   preRoundBoxDelay: 0.3
+  classSelectionSeconds: 20
   countdownSeconds: 5
   dropDelaySeconds: 1
   safeZoneDurationSeconds: 30
@@ -8337,9 +8351,22 @@ MonoBehaviour:
   _AlivePlayersInRound: 0
   _CurrentZoneStep: 0
   _CurrentZoneRadius: 0
+  _ClassAbilitiesUnlocked:
+    _value: 0
   _WinnerPlayerRawEncoded: 0
   _AcceptingPlayers:
     _value: 0
+  _MatchmakingStartConfirmed:
+    _value: 0
+  _ConfirmedHumanPlayersAtStart: 0
+  _MatchWinTarget: 0
+  _ScoreParticipantCount: 0
+  _MatchWinnerRawEncoded: 0
+  _LockedNpcCount: 0
+  _MatchScoreInitialized:
+    _value: 0
+  _ScoreParticipantRawEncoded: 
+  _ScoreParticipantWins: 
 --- !u!114 &1747514605
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9134,3 +9161,4 @@ SceneRoots:
   - {fileID: 1575501031}
   - {fileID: 2045988970}
   - {fileID: 683817167}
+  - {fileID: 910000002}

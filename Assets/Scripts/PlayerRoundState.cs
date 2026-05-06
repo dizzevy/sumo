@@ -824,7 +824,7 @@ namespace Sumo.Gameplay
 
             canvasObject.AddComponent<GraphicRaycaster>();
 
-            _rootPanel = CreatePanel("ClassSelectionRoot", canvasObject.transform, Vector2.zero, Vector2.one, new Color(0.02f, 0.04f, 0.08f, 1f));
+            _rootPanel = CreatePanel("ClassSelectionRoot", canvasObject.transform, Vector2.zero, Vector2.one, new Color(0.055f, 0.065f, 0.07f, 1f));
 
             _timerText = CreateText(
                 "Timer",
@@ -833,7 +833,7 @@ namespace Sumo.Gameplay
                 34,
                 FontStyle.Bold,
                 TextAnchor.MiddleCenter,
-                new Color(0.86f, 0.94f, 1f, 1f));
+                new Color(1f, 0.94f, 0.68f, 1f));
             SetAnchored(_timerText.rectTransform, new Vector2(0.5f, 0.93f), new Vector2(0.5f, 0.93f), new Vector2(0f, 0f), new Vector2(820f, 58f));
 
             GameObject previewArea = new GameObject("PreviewArea", typeof(RectTransform));
@@ -845,7 +845,7 @@ namespace Sumo.Gameplay
             previewShadow.transform.SetParent(previewArea.transform, false);
             previewShadow.sprite = GetCircleSprite();
             previewShadow.preserveAspect = true;
-            previewShadow.color = new Color(0f, 0f, 0f, 0.34f);
+            previewShadow.color = new Color(0f, 0f, 0f, 0.52f);
             SetAnchored(previewShadow.rectTransform, new Vector2(0.5f, 0.53f), new Vector2(0.5f, 0.53f), new Vector2(26f, -34f), new Vector2(430f, 430f));
 
             _previewBall = new GameObject("ClassBallPreview", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
@@ -855,8 +855,8 @@ namespace Sumo.Gameplay
             SetAnchored(_previewBall.rectTransform, new Vector2(0.5f, 0.53f), new Vector2(0.5f, 0.53f), Vector2.zero, new Vector2(430f, 430f));
 
             Outline previewOutline = _previewBall.gameObject.AddComponent<Outline>();
-            previewOutline.effectColor = new Color(1f, 1f, 1f, 0.16f);
-            previewOutline.effectDistance = new Vector2(3f, -3f);
+            previewOutline.effectColor = new Color(0.015f, 0.012f, 0.018f, 0.92f);
+            previewOutline.effectDistance = new Vector2(4f, -4f);
 
             _leftButton = CreateButton("PreviousClassButton", previewArea.transform, "Previous", font, 24);
             SetAnchored(_leftButton.GetComponent<RectTransform>(), new Vector2(0.36f, 0.08f), new Vector2(0.36f, 0.08f), Vector2.zero, new Vector2(190f, 58f));
@@ -866,29 +866,29 @@ namespace Sumo.Gameplay
             SetAnchored(_rightButton.GetComponent<RectTransform>(), new Vector2(0.64f, 0.08f), new Vector2(0.64f, 0.08f), Vector2.zero, new Vector2(190f, 58f));
             _rightButton.onClick.AddListener(() => CycleSelection(1));
 
-            GameObject statsPanel = CreatePanel("ClassStatsPanel", _rootPanel.transform, new Vector2(0.56f, 0.15f), new Vector2(0.92f, 0.83f), new Color(0.12f, 0.15f, 0.18f, 1f));
+            GameObject statsPanel = CreatePanel("ClassStatsPanel", _rootPanel.transform, new Vector2(0.56f, 0.15f), new Vector2(0.92f, 0.83f), new Color(0.92f, 0.88f, 0.76f, 1f));
             Outline panelOutline = statsPanel.AddComponent<Outline>();
-            panelOutline.effectColor = new Color(0.68f, 0.78f, 0.86f, 0.24f);
-            panelOutline.effectDistance = new Vector2(2f, -2f);
+            panelOutline.effectColor = new Color(0.015f, 0.012f, 0.018f, 1f);
+            panelOutline.effectDistance = new Vector2(4f, -4f);
 
-            _classNameText = CreateText("ClassName", statsPanel.transform, font, 46, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
+            _classNameText = CreateText("ClassName", statsPanel.transform, font, 46, FontStyle.Bold, TextAnchor.UpperLeft, new Color(0.04f, 0.035f, 0.045f, 1f));
             SetStretchTop(_classNameText.rectTransform, 44f, 44f, 34f, 60f);
 
-            _abilityNameText = CreateText("AbilityName", statsPanel.transform, font, 30, FontStyle.Bold, TextAnchor.UpperLeft, new Color(1f, 0.86f, 0.42f, 1f));
+            _abilityNameText = CreateText("AbilityName", statsPanel.transform, font, 30, FontStyle.Bold, TextAnchor.UpperLeft, new Color(0.88f, 0.18f, 0.16f, 1f));
             SetStretchTop(_abilityNameText.rectTransform, 44f, 44f, 104f, 42f);
 
-            _descriptionText = CreateText("Description", statsPanel.transform, font, 23, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.88f, 0.92f, 0.98f, 1f));
+            _descriptionText = CreateText("Description", statsPanel.transform, font, 23, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.075f, 0.07f, 0.08f, 1f));
             SetStretchTop(_descriptionText.rectTransform, 44f, 44f, 160f, 76f);
 
             Image divider = new GameObject("ClassStatsDivider", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
             divider.transform.SetParent(statsPanel.transform, false);
-            divider.color = new Color(0.74f, 0.84f, 0.95f, 0.28f);
+            divider.color = new Color(0.02f, 0.018f, 0.024f, 0.84f);
             SetStretchTop(divider.rectTransform, 44f, 44f, 254f, 2f);
 
-            _statsText = CreateText("Stats", statsPanel.transform, font, 25, FontStyle.Normal, TextAnchor.UpperLeft, Color.white);
+            _statsText = CreateText("Stats", statsPanel.transform, font, 25, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.04f, 0.035f, 0.045f, 1f));
             SetStretchTop(_statsText.rectTransform, 44f, 44f, 282f, 270f);
 
-            _statusText = CreateText("ReadyStatus", statsPanel.transform, font, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.82f, 0.94f, 1f, 1f));
+            _statusText = CreateText("ReadyStatus", statsPanel.transform, font, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.04f, 0.38f, 0.68f, 1f));
             SetStretchBottom(_statusText.rectTransform, 44f, 44f, 106f, 34f);
 
             _confirmButton = CreateButton("ConfirmClassButton", statsPanel.transform, "Lock Class", font, 30);
@@ -936,17 +936,21 @@ namespace Sumo.Gameplay
             buttonObject.transform.SetParent(parent, false);
 
             Image image = buttonObject.GetComponent<Image>();
-            image.color = new Color(0.12f, 0.33f, 0.50f, 1f);
+            image.color = new Color(0.96f, 0.76f, 0.16f, 1f);
 
             Button button = buttonObject.GetComponent<Button>();
             ColorBlock colors = button.colors;
-            colors.normalColor = new Color(0.12f, 0.33f, 0.50f, 1f);
-            colors.highlightedColor = new Color(0.18f, 0.46f, 0.68f, 1f);
-            colors.pressedColor = new Color(0.08f, 0.24f, 0.38f, 1f);
-            colors.disabledColor = new Color(0.22f, 0.22f, 0.22f, 0.7f);
+            colors.normalColor = new Color(0.96f, 0.76f, 0.16f, 1f);
+            colors.highlightedColor = new Color(1f, 0.9f, 0.28f, 1f);
+            colors.pressedColor = new Color(0.88f, 0.18f, 0.16f, 1f);
+            colors.disabledColor = new Color(0.34f, 0.32f, 0.30f, 0.78f);
             button.colors = colors;
 
-            Text label = CreateText("Label", buttonObject.transform, font, fontSize, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            Outline outline = buttonObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0.015f, 0.012f, 0.018f, 1f);
+            outline.effectDistance = new Vector2(3f, -3f);
+
+            Text label = CreateText("Label", buttonObject.transform, font, fontSize, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.025f, 0.02f, 0.025f, 1f));
             RectTransform labelRect = label.rectTransform;
             labelRect.anchorMin = Vector2.zero;
             labelRect.anchorMax = Vector2.one;
@@ -1383,6 +1387,41 @@ namespace Sumo.Gameplay
                 color = tint
             };
 
+            if (material.HasProperty("_BaseColor"))
+            {
+                material.SetColor("_BaseColor", tint);
+            }
+
+            if (material.HasProperty("_Color"))
+            {
+                material.SetColor("_Color", tint);
+            }
+
+            if (material.HasProperty("_ShadowColor"))
+            {
+                material.SetColor("_ShadowColor", Color.Lerp(tint, Color.black, 0.48f));
+            }
+
+            if (material.HasProperty("_InkColor"))
+            {
+                material.SetColor("_InkColor", new Color(0.018f, 0.015f, 0.024f, 1f));
+            }
+
+            if (material.HasProperty("_InkWidth"))
+            {
+                material.SetFloat("_InkWidth", 1.45f);
+            }
+
+            if (material.HasProperty("_ShadeSteps"))
+            {
+                material.SetFloat("_ShadeSteps", 3f);
+            }
+
+            if (material.HasProperty("_HalftoneStrength"))
+            {
+                material.SetFloat("_HalftoneStrength", 0.22f);
+            }
+
             if (material.HasProperty("_EmissionColor"))
             {
                 material.EnableKeyword("_EMISSION");
@@ -1395,6 +1434,7 @@ namespace Sumo.Gameplay
         private static Material CreateParticleMaterial(Color tint)
         {
             Shader shader = FindFirstSupportedShader(
+                "Sumo/ComicTransparent",
                 "Universal Render Pipeline/Particles/Unlit",
                 "Particles/Standard Unlit",
                 "Sprites/Default",
@@ -1416,6 +1456,7 @@ namespace Sumo.Gameplay
             bool hasRenderPipeline = GraphicsSettings.currentRenderPipeline != null;
             return hasRenderPipeline
                 ? FindFirstSupportedShader(
+                    "Sumo/ComicToon",
                     "Universal Render Pipeline/Lit",
                     "Universal Render Pipeline/Simple Lit",
                     "Universal Render Pipeline/Unlit",
@@ -1490,6 +1531,42 @@ namespace Sumo.Gameplay
             if (material.HasProperty("_Mode"))
             {
                 material.SetFloat("_Mode", 3f);
+            }
+
+            Color tint = material.color;
+            if (material.HasProperty("_BaseColor"))
+            {
+                material.SetColor("_BaseColor", tint);
+            }
+
+            if (material.HasProperty("_Color"))
+            {
+                material.SetColor("_Color", tint);
+            }
+
+            if (material.HasProperty("_ShadowColor"))
+            {
+                material.SetColor("_ShadowColor", Color.Lerp(tint, Color.black, 0.38f));
+            }
+
+            if (material.HasProperty("_InkColor"))
+            {
+                material.SetColor("_InkColor", new Color(0.015f, 0.014f, 0.02f, Mathf.Clamp01(tint.a + 0.36f)));
+            }
+
+            if (material.HasProperty("_InkWidth"))
+            {
+                material.SetFloat("_InkWidth", 1.2f);
+            }
+
+            if (material.HasProperty("_ShadeSteps"))
+            {
+                material.SetFloat("_ShadeSteps", 3f);
+            }
+
+            if (material.HasProperty("_HalftoneStrength"))
+            {
+                material.SetFloat("_HalftoneStrength", 0.26f);
             }
 
             material.EnableKeyword("_ALPHABLEND_ON");

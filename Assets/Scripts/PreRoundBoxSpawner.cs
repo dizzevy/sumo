@@ -20,6 +20,7 @@ namespace Sumo.Gameplay
         [SerializeField] private Vector3 spectatorFallbackOffset = new Vector3(0f, 12f, 0f);
 
         private readonly List<Transform> _cachedPoints = new List<Transform>(16);
+        private bool _loggedMissingSpawnPoints;
 
         public int SpawnPointCount
         {
@@ -51,6 +52,7 @@ namespace Sumo.Gameplay
             Vector3 horizontal = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
             position = transform.position + horizontal + Vector3.up * fallbackHeightOffset;
             rotation = transform.rotation;
+            LogMissingSpawnPointsOnce(position);
             return true;
         }
 
@@ -118,6 +120,17 @@ namespace Sumo.Gameplay
 
                 _cachedPoints.Add(child);
             }
+        }
+
+        private void LogMissingSpawnPointsOnce(Vector3 fallbackPosition)
+        {
+            if (_loggedMissingSpawnPoints)
+            {
+                return;
+            }
+
+            Debug.LogError($"{nameof(PreRoundBoxSpawner)} on {name}: no valid spawn point children or explicit spawnPoints were found; using start-box fallback at {fallbackPosition}.");
+            _loggedMissingSpawnPoints = true;
         }
 
         private void OnDrawGizmosSelected()

@@ -26,8 +26,9 @@ MonoBehaviour:
     probeSamplingDebugMesh: {fileID: 0}
     probeSamplingDebugTexture: {fileID: 0}
     probeVolumeBlendStatesCS: {fileID: 0}
-  m_RendererFeatures: []
-  m_RendererFeatureMap: 
+  m_RendererFeatures:
+  - {fileID: 4890904120229912237}
+  m_RendererFeatureMap: ad5ecc5c62fbdf43
   m_UseNativeRenderPass: 1
   postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 2
@@ -50,3 +51,22 @@ MonoBehaviour:
   m_CopyDepthMode: 0
   m_AccurateGbufferNormals: 0
   m_IntermediateTextureMode: 0
+--- !u!114 &4890904120229912237
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 61c5ee5f292c4f88a85d957d4b87bf3e, type: 3}
+  m_Name: ComicRendererFeature
+  m_EditorClassIdentifier: 
+  m_Active: 1
+  renderOutlines: 1
+  renderComposite: 1
+  liteMode: 1
+  layerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295

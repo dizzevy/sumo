@@ -552,7 +552,10 @@ namespace Sumo.Gameplay
             panelRect.sizeDelta = panelSize;
 
             Image background = panel.AddComponent<Image>();
-            background.color = new Color(0.02f, 0.05f, 0.09f, 0.34f);
+            background.color = new Color(0.92f, 0.88f, 0.76f, 0.88f);
+            Outline panelOutline = panel.AddComponent<Outline>();
+            panelOutline.effectColor = new Color(0.015f, 0.012f, 0.018f, 0.96f);
+            panelOutline.effectDistance = new Vector2(3f, -3f);
 
             primaryText = CreateText(
                 "Primary",
@@ -562,7 +565,7 @@ namespace Sumo.Gameplay
                 FontStyle.Bold,
                 new Vector2(0f, -14f),
                 new Vector2(panelSize.x - 18f, 38f),
-                new Color(0.95f, 0.98f, 1f, 1f));
+                new Color(0.04f, 0.035f, 0.045f, 1f));
 
             secondaryText = CreateText(
                 "Secondary",
@@ -572,7 +575,7 @@ namespace Sumo.Gameplay
                 FontStyle.Normal,
                 new Vector2(0f, -64f),
                 new Vector2(panelSize.x - 18f, 126f),
-                new Color(0.82f, 0.92f, 1f, 0.98f));
+                new Color(0.075f, 0.07f, 0.08f, 1f));
 
             alertText = CreateText(
                 "Alert",
@@ -582,7 +585,7 @@ namespace Sumo.Gameplay
                 FontStyle.Bold,
                 new Vector2(0f, -186f),
                 new Vector2(panelSize.x - 24f, 24f),
-                new Color(1f, 0.9f, 0.62f, 1f));
+                new Color(0.88f, 0.18f, 0.16f, 1f));
 
             CreateAbilityPanel(canvasObject.transform, font);
 
@@ -602,7 +605,10 @@ namespace Sumo.Gameplay
             panelRect.sizeDelta = new Vector2(760f, 96f);
 
             Image background = _abilityPanel.AddComponent<Image>();
-            background.color = new Color(0.02f, 0.05f, 0.09f, 0.74f);
+            background.color = new Color(0.92f, 0.88f, 0.76f, 0.94f);
+            Outline panelOutline = _abilityPanel.AddComponent<Outline>();
+            panelOutline.effectColor = new Color(0.015f, 0.012f, 0.018f, 0.98f);
+            panelOutline.effectDistance = new Vector2(3f, -3f);
 
             abilityText = CreateText(
                 "AbilityText",
@@ -612,7 +618,7 @@ namespace Sumo.Gameplay
                 FontStyle.Bold,
                 new Vector2(0f, -10f),
                 new Vector2(728f, 30f),
-                new Color(0.92f, 0.97f, 1f, 1f));
+                new Color(0.04f, 0.035f, 0.045f, 1f));
 
             GameObject barBackgroundObject = new GameObject("AbilityBarBackground");
             barBackgroundObject.transform.SetParent(panelRect, false);
@@ -624,7 +630,7 @@ namespace Sumo.Gameplay
             barBackgroundRect.sizeDelta = new Vector2(700f, 28f);
 
             Image barBackground = barBackgroundObject.AddComponent<Image>();
-            barBackground.color = new Color(0f, 0f, 0f, 0.62f);
+            barBackground.color = new Color(0.015f, 0.012f, 0.018f, 0.9f);
 
             GameObject fillObject = new GameObject("AbilityBarFill");
             fillObject.transform.SetParent(barBackgroundObject.transform, false);
@@ -656,7 +662,7 @@ namespace Sumo.Gameplay
                 tickRect.sizeDelta = new Vector2(2f, 0f);
 
                 Image tickImage = tickObject.AddComponent<Image>();
-                tickImage.color = new Color(1f, 1f, 1f, 0.32f);
+                tickImage.color = new Color(0.92f, 0.88f, 0.76f, 0.46f);
                 tickImage.raycastTarget = false;
             }
 
@@ -704,11 +710,11 @@ namespace Sumo.Gameplay
 
         private static Color EvaluateStaminaGradient(float t)
         {
-            Color empty = new Color(0.95f, 0.18f, 0.22f, 1f);
-            Color low = new Color(1f, 0.58f, 0.14f, 1f);
-            Color mid = new Color(1f, 0.9f, 0.22f, 1f);
-            Color high = new Color(0.25f, 0.95f, 0.52f, 1f);
-            Color full = new Color(0.16f, 0.72f, 1f, 1f);
+            Color empty = new Color(0.88f, 0.16f, 0.14f, 1f);
+            Color low = new Color(1f, 0.48f, 0.08f, 1f);
+            Color mid = new Color(0.98f, 0.78f, 0.12f, 1f);
+            Color high = new Color(0.28f, 0.82f, 0.42f, 1f);
+            Color full = new Color(0.05f, 0.58f, 0.95f, 1f);
 
             if (t < 0.25f)
             {
@@ -758,8 +764,8 @@ namespace Sumo.Gameplay
             text.color = color;
 
             Outline outline = go.AddComponent<Outline>();
-            outline.effectColor = new Color(0f, 0f, 0f, 0.88f);
-            outline.effectDistance = new Vector2(1.1f, -1.1f);
+            outline.effectColor = new Color(0f, 0f, 0f, 0.94f);
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
 
             return text;
         }

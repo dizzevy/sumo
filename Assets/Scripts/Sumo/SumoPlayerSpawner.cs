@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Fusion;
 using Fusion.Sockets;
+using Sumo.Gameplay;
 using UnityEngine;
 
 namespace Sumo
@@ -15,6 +16,7 @@ namespace Sumo
 
         [Header("Spawn")]
         [SerializeField] private Transform[] spawnPoints;
+        [SerializeField] private PreRoundBoxSpawner preRoundBoxSpawner;
         [SerializeField] private Vector3 fallbackSpawnCenter = Vector3.zero;
         [SerializeField] private float fallbackSpawnRadius = 8f;
 
@@ -200,6 +202,18 @@ namespace Sumo
                         return point.position;
                     }
                 }
+            }
+
+            if (preRoundBoxSpawner == null)
+            {
+                preRoundBoxSpawner = FindFirstObjectByType<PreRoundBoxSpawner>(FindObjectsInactive.Include);
+            }
+
+            if (preRoundBoxSpawner != null
+                && preRoundBoxSpawner.TryGetSpawnPose(_spawnCursor, out Vector3 preRoundPosition, out _))
+            {
+                _spawnCursor++;
+                return preRoundPosition;
             }
 
             float angle = _spawnCursor * 2.39996323f;

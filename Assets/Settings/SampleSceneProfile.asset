@@ -21,7 +21,7 @@ MonoBehaviour:
     m_Value: 1
   intensity:
     m_OverrideState: 1
-    m_Value: 0.25
+    m_Value: 0
   scatter:
     m_OverrideState: 1
     m_Value: 0.5
@@ -92,6 +92,7 @@ MonoBehaviour:
   - {fileID: -7893295128165547882}
   - {fileID: 7391319092446245454}
   - {fileID: -3357603926938260329}
+  - {fileID: -6604624577913205101}
 --- !u!114 &849379129802519247
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -157,3 +158,43 @@ MonoBehaviour:
   clamp:
     m_OverrideState: 0
     m_Value: 0.05
+--- !u!114 &-6604624577913205101
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2460f7d917744e28bf8e0c48e79ec150, type: 3}
+  m_Name: ComicStyleVolumeComponent
+  m_EditorClassIdentifier: 
+  active: 1
+  enabled:
+    m_OverrideState: 1
+    m_Value: 1
+  posterizeStrength:
+    m_OverrideState: 1
+    m_Value: 0.36
+  paletteSteps:
+    m_OverrideState: 1
+    m_Value: 7
+  halftoneScale:
+    m_OverrideState: 1
+    m_Value: 9.5
+  halftoneIntensity:
+    m_OverrideState: 1
+    m_Value: 0.14
+  hatchIntensity:
+    m_OverrideState: 1
+    m_Value: 0.12
+  bloomThreshold:
+    m_OverrideState: 1
+    m_Value: 0.72
+  bloomIntensity:
+    m_OverrideState: 1
+    m_Value: 0.12
+  outlineStrength:
+    m_OverrideState: 1
+    m_Value: 1

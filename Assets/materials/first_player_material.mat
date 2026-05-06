@@ -8,7 +8,7 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: first_player_material
-  m_Shader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
+  m_Shader: {fileID: 4800000, guid: 770fc196a9c04e019839f87e99e111d0, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -101,6 +101,9 @@ Material:
     - _GlossMapScale: 0
     - _Glossiness: 0
     - _GlossyReflections: 0
+    - _HalftoneScale: 7
+    - _HalftoneStrength: 0.18
+    - _InkWidth: 2.8
     - _Metallic: 0
     - _OcclusionStrength: 1
     - _Parallax: 0.005
@@ -109,6 +112,7 @@ Material:
     - _Smoothness: 0
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
+    - _ShadeSteps: 4
     - _SrcBlend: 1
     - _SrcBlendAlpha: 1
     - _Surface: 0
@@ -119,6 +123,8 @@ Material:
     - _BaseColor: {r: 0.5849056, g: 0.20692417, b: 0.21312031, a: 1}
     - _Color: {r: 0.5849056, g: 0.20692414, b: 0.21312028, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
+    - _InkColor: {r: 0.01, g: 0.008, b: 0.014, a: 1}
+    - _ShadowColor: {r: 0.32, g: 0.32, b: 0.32, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

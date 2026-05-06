@@ -47,6 +47,9 @@ namespace Sumo
         [Header("Visual")]
         [SerializeField] private bool enforceVisibleRuntimeMaterial = true;
         [SerializeField] private Color runtimeBallColor = new Color(0.24f, 0.82f, 0.35f, 1f);
+        [SerializeField] private float comicMotionReferenceSpeed = 10f;
+        [SerializeField] private float comicMotionShadowStrength = 0.1f;
+        [SerializeField] private float comicMotionSmoothing = 12f;
 
         private Rigidbody _rigidbody;
         private SphereCollider _sphereCollider;
@@ -72,6 +75,13 @@ namespace Sumo
         private static Material _sharedRuntimeMaterial;
         private Vector3 _cachedWallNormal;
         private int _cachedWallTick = int.MinValue;
+        private Vector3 _comicShadowDirection = Vector3.forward;
+        private float _comicShadowAmount;
+
+        private static readonly int ComicMotionDirectionId = Shader.PropertyToID("_ComicMotionDirection");
+        private static readonly int ComicMotionAmountId = Shader.PropertyToID("_ComicMotionAmount");
+        private static readonly int ComicShadePhaseId = Shader.PropertyToID("_ComicShadePhase");
+        private static readonly int ComicMotionShadowStrengthId = Shader.PropertyToID("_ComicMotionShadowStrength");
 
         private const float FallbackAntiBulldozeSpeedThreshold = 3.8f;
         private const float FallbackIntoPlayerAccelerationScale = 0.12f;
@@ -316,6 +326,8 @@ namespace Sumo
             _lastResolvedMovementCommand = default;
             _hasLastResolvedMovementCommand = false;
             _smoothedRamDriveAssist01 = 0f;
+            _comicShadowDirection = Vector3.forward;
+            _comicShadowAmount = 0f;
             _lastAuthorityAbilitySequence = 0;
             _lastPredictedAbilitySequence = 0;
             _lastProcessedClassRaw = int.MinValue;
@@ -334,6 +346,7 @@ namespace Sumo
             }
 
             ApplyClassPresentation();
+            ApplyComicMotionPresentation();
 
             if (ShouldEnableRemoteProxySimulation()
                 && Runner != null
@@ -1039,6 +1052,7 @@ namespace Sumo
         public override void Render()
         {
             ApplyClassPresentation();
+            ApplyComicMotionPresentation();
         }
 
         private void EnsurePresentationComponents()
@@ -1854,7 +1868,12 @@ namespace Sumo
                 return;
             }
 
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            Shader shader = Shader.Find("Sumo/ComicToon");
+            if (shader == null)
+            {
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+            }
+
             if (shader == null)
             {
                 shader = Shader.Find("Standard");
@@ -1873,6 +1892,36 @@ namespace Sumo
                     name = "SumoBallRuntimeMaterial",
                     color = runtimeBallColor
                 };
+
+                if (_sharedRuntimeMaterial.HasProperty("_BaseColor"))
+                {
+                    _sharedRuntimeMaterial.SetColor("_BaseColor", runtimeBallColor);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_Color"))
+                {
+                    _sharedRuntimeMaterial.SetColor("_Color", runtimeBallColor);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_ShadowColor"))
+                {
+                    _sharedRuntimeMaterial.SetColor("_ShadowColor", new Color(0.32f, 0.32f, 0.32f, 1f));
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_InkWidth"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_InkWidth", 2.8f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_ShadeSteps"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_ShadeSteps", 4f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_ComicMotionShadowStrength"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_ComicMotionShadowStrength", comicMotionShadowStrength);
+                }
             }
 
             targetRenderer.sharedMaterial = _sharedRuntimeMaterial;
@@ -1924,6 +1973,60 @@ namespace Sumo
             _materialPropertyBlock.SetColor("_BaseColor", classColor);
             targetRenderer.SetPropertyBlock(_materialPropertyBlock);
             _lastAppliedClassRaw = classRaw;
+        }
+
+        private void ApplyComicMotionPresentation()
+        {
+            MeshRenderer targetRenderer = ResolveTargetRenderer();
+            if (targetRenderer == null)
+            {
+                return;
+            }
+
+            if (_materialPropertyBlock == null)
+            {
+                _materialPropertyBlock = new MaterialPropertyBlock();
+            }
+
+            Vector3 horizontalVelocity = _rigidbody != null ? _rigidbody.linearVelocity : Vector3.zero;
+            horizontalVelocity.y = 0f;
+            float speed = horizontalVelocity.magnitude;
+
+            Vector3 targetDirection = speed > 0.08f ? horizontalVelocity / speed : _currentMoveDirection;
+            targetDirection.y = 0f;
+            if (targetDirection.sqrMagnitude < 0.0001f)
+            {
+                targetDirection = _comicShadowDirection.sqrMagnitude > 0.0001f ? _comicShadowDirection : transform.forward;
+                targetDirection.y = 0f;
+            }
+
+            if (targetDirection.sqrMagnitude < 0.0001f)
+            {
+                targetDirection = Vector3.forward;
+            }
+
+            targetDirection.Normalize();
+
+            float targetAmount = speed > 0.05f
+                ? Mathf.Clamp01(speed / Mathf.Max(0.01f, comicMotionReferenceSpeed))
+                : 0f;
+            float deltaTime = Mathf.Max(0f, Time.deltaTime);
+            float blend = 1f - Mathf.Exp(-Mathf.Max(0.01f, comicMotionSmoothing) * deltaTime);
+
+            if (targetAmount > 0.005f)
+            {
+                _comicShadowDirection = Vector3.Slerp(_comicShadowDirection, targetDirection, blend).normalized;
+            }
+
+            _comicShadowAmount = Mathf.Lerp(_comicShadowAmount, targetAmount, blend);
+            float phase = Vector3.Dot(transform.position, new Vector3(0.37f, 0f, 0.29f));
+
+            targetRenderer.GetPropertyBlock(_materialPropertyBlock);
+            _materialPropertyBlock.SetVector(ComicMotionDirectionId, new Vector4(_comicShadowDirection.x, _comicShadowDirection.y, _comicShadowDirection.z, 0f));
+            _materialPropertyBlock.SetFloat(ComicMotionAmountId, _comicShadowAmount);
+            _materialPropertyBlock.SetFloat(ComicShadePhaseId, phase);
+            _materialPropertyBlock.SetFloat(ComicMotionShadowStrengthId, Mathf.Clamp01(comicMotionShadowStrength));
+            targetRenderer.SetPropertyBlock(_materialPropertyBlock);
         }
 
         private float ResolvePresentationScaleMultiplier()
@@ -2017,6 +2120,9 @@ namespace Sumo
             mass = Mathf.Max(0.01f, mass);
             drag = Mathf.Max(0f, drag);
             angularDrag = Mathf.Max(0f, angularDrag);
+            comicMotionReferenceSpeed = Mathf.Max(0.01f, comicMotionReferenceSpeed);
+            comicMotionShadowStrength = Mathf.Clamp01(comicMotionShadowStrength);
+            comicMotionSmoothing = Mathf.Max(0.01f, comicMotionSmoothing);
 
             if (visualTarget == transform)
             {

@@ -254,6 +254,7 @@ namespace Sumo.Gameplay
             if (_particleMaterial == null)
             {
                 Shader particleShader = FindBestShader(
+                    "Sumo/ComicTransparent",
                     "Universal Render Pipeline/Particles/Unlit",
                     "Universal Render Pipeline/Unlit",
                     "Particles/Standard Unlit",
@@ -346,6 +347,7 @@ namespace Sumo.Gameplay
         private static Material CreateTransparentMaterial(string materialName, Color baseColor, float emissionMultiplier)
         {
             Shader shader = FindBestShader(
+                "Sumo/ComicTransparent",
                 "Universal Render Pipeline/Unlit",
                 "Universal Render Pipeline/Lit",
                 "Sprites/Default",
@@ -415,6 +417,26 @@ namespace Sumo.Gameplay
             if (material.HasProperty("_Cull"))
             {
                 material.SetFloat("_Cull", (float)CullMode.Off);
+            }
+
+            if (material.HasProperty("_InkColor"))
+            {
+                material.SetColor("_InkColor", new Color(0.015f, 0.018f, 0.024f, Mathf.Clamp01(baseColor.a + 0.38f)));
+            }
+
+            if (material.HasProperty("_InkWidth"))
+            {
+                material.SetFloat("_InkWidth", 1.6f);
+            }
+
+            if (material.HasProperty("_ShadeSteps"))
+            {
+                material.SetFloat("_ShadeSteps", 3f);
+            }
+
+            if (material.HasProperty("_HalftoneStrength"))
+            {
+                material.SetFloat("_HalftoneStrength", 0.18f);
             }
 
             if (material.HasProperty("_Mode"))
