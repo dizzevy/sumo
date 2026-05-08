@@ -964,7 +964,7 @@ namespace Sumo.Gameplay
             switch (definition.Class)
             {
                 case Sumo.SumoPlayerClass.Fatso:
-                    return "Size                 x3\nSpeed                x1/3 while active\nIncoming push        x0.15\nOutgoing push        x2\nActive time          10s\nRecharge             30s";
+                    return "Size                 x3\nSpeed                x1/3 while active\nIncoming push        x0.30; high-speed hits pierce up to x0.90\nOutgoing push        x5\nActive time          10s\nRecharge             30s";
                 case Sumo.SumoPlayerClass.Jumper:
                 default:
                     return "Role                 Mobility\nJump boost           +12 velocity\nAbility input        F while active\nActive time          10s\nRecharge             30s";

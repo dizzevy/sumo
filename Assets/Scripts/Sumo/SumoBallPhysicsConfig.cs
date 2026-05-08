@@ -6,6 +6,8 @@ namespace Sumo
     [DisallowMultipleComponent]
     public sealed class SumoBallPhysicsConfig : MonoBehaviour
     {
+        private const float MaxHighTierShoveMultiplier = 6.8f;
+
         [Header("Rigidbody")]
         [SerializeField] private float mass = 1.1f;
         [SerializeField] private float linearDamping = 0.22f;
@@ -73,7 +75,7 @@ namespace Sumo
         [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
         [SerializeField] private float lowTierShoveMultiplier = 2f;
         [SerializeField] private float midTierShoveMultiplier = 2f;
-        [SerializeField] private float highTierShoveMultiplier = 3.4f;
+        [SerializeField] private float highTierShoveMultiplier = 6.8f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
@@ -343,7 +345,7 @@ namespace Sumo
             backstepDeadZoneShare01 = Mathf.Clamp(backstepDeadZoneShare01, 0f, 0.25f);
             lowTierShoveMultiplier = Mathf.Clamp(lowTierShoveMultiplier, 0.25f, 5f);
             midTierShoveMultiplier = Mathf.Clamp(midTierShoveMultiplier, 0.25f, 5f);
-            highTierShoveMultiplier = Mathf.Clamp(highTierShoveMultiplier, 0.25f, 5f);
+            highTierShoveMultiplier = Mathf.Clamp(highTierShoveMultiplier, 0.25f, MaxHighTierShoveMultiplier);
 
             attackerTieSpeedEpsilon = Mathf.Max(0f, attackerTieSpeedEpsilon);
             contactBreakGraceTicks = Mathf.Clamp(contactBreakGraceTicks, 4, 12);

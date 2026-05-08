@@ -344,7 +344,7 @@ MonoBehaviour:
   backstepDeadZoneShare01: 0.02
   lowTierShoveMultiplier: 2
   midTierShoveMultiplier: 2.15
-  highTierShoveMultiplier: 3.4
+  highTierShoveMultiplier: 6.8
   attackerTieSpeedEpsilon: 0.15
   resolveTieByLowerKey: 1
   contactBreakGraceTicks: 5

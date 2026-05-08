@@ -2215,7 +2215,11 @@ namespace Sumo
                 : ActiveCombatVictimRamPredictedResponseShare;
         }
 
-        private static void ApplyVelocityDelta(SumoCollisionController controller, Vector3 velocityDelta, SimulationMode mode)
+        private static void ApplyVelocityDelta(
+            SumoCollisionController controller,
+            Vector3 velocityDelta,
+            SimulationMode mode,
+            float incomingMultiplierOverride = 0f)
         {
             if (!CanApplyForces(controller, mode))
             {
@@ -2227,7 +2231,9 @@ namespace Sumo
                 return;
             }
 
-            controller._rigidbody.linearVelocity += velocityDelta * GetClassIncomingVelocityMultiplier(controller);
+            controller._rigidbody.linearVelocity += velocityDelta * ResolveIncomingResponseMultiplier(
+                controller,
+                incomingMultiplierOverride);
         }
 
         private static void ApplyPositionDelta(SumoCollisionController controller, Vector3 positionDelta, SimulationMode mode)
@@ -2297,6 +2303,20 @@ namespace Sumo
             return ResolveClassIncomingResponseMultiplier(controller);
         }
 
+        private static float ResolveIncomingResponseMultiplier(
+            SumoCollisionController controller,
+            float incomingMultiplierOverride)
+        {
+            if (!float.IsNaN(incomingMultiplierOverride)
+                && !float.IsInfinity(incomingMultiplierOverride)
+                && incomingMultiplierOverride > 0f)
+            {
+                return Mathf.Clamp(incomingMultiplierOverride, 0.02f, 1f);
+            }
+
+            return ResolveClassIncomingResponseMultiplier(controller);
+        }
+
         private static float GetClassContactInverseMassMultiplier(SumoCollisionController controller)
         {
             return ResolveClassIncomingResponseMultiplier(controller);
@@ -2316,6 +2336,30 @@ namespace Sumo
             }
 
             return Mathf.Clamp(multiplier, 0.02f, 1f);
+        }
+
+        private static bool IsFatsoClass(SumoCollisionController controller)
+        {
+            return controller != null
+                && controller.ballController != null
+                && controller.ballController.SimulationClass == SumoPlayerClass.Fatso;
+        }
+
+        private static bool IsActiveFatsoAbility(SumoCollisionController controller)
+        {
+            return controller != null
+                && controller.ballController != null
+                && controller.ballController.IsSimulationFatsoAbilityActive;
+        }
+
+        private static bool IsHighSpeedFatsoCounterRam(
+            in SumoRamState pairState,
+            SumoCollisionController attacker,
+            SumoCollisionController victim)
+        {
+            return GetStateVictimIncomingPushMultiplierOverride(pairState) > 0f
+                && !IsFatsoClass(attacker)
+                && IsActiveFatsoAbility(victim);
         }
 
         private static bool CanApplyForces(SumoCollisionController controller, SimulationMode mode)
@@ -2715,6 +2759,10 @@ namespace Sumo
                 false,
                 GetControllerKey(attacker),
                 GetControllerKey(victim));
+            if (IsHighSpeedFatsoCounterRam(pairState, attacker, victim))
+            {
+                liveDecision = new SumoAttackerDecision(SumoAttackerRole.First, SumoTieResolvedBy.SpeedDelta);
+            }
 
             if (!liveDecision.HasAttacker)
             {
@@ -2813,7 +2861,11 @@ namespace Sumo
             {
                 if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
                 {
-                    ApplyAcceleration(victim, liveDirection * cappedVictimAcceleration, mode);
+                    ApplyAcceleration(
+                        victim,
+                        liveDirection * cappedVictimAcceleration,
+                        mode,
+                        GetStateVictimIncomingPushMultiplierOverride(pairState));
                 }
 
                 if (ShouldApplyPredictedAttackerRecoil(attacker, mode))
@@ -3012,8 +3064,38 @@ namespace Sumo
             float secondPressure = Mathf.Max(
                 SanitizeNonNegativeFinite(secondEntryApproachSpeed),
                 GetApproachSpeed(second, secondVelocity, -firstToSecond));
+            float firstCounterPhysicalSpeed = SumoImpactResolver.ComputeCappedPhysicalImpactSpeed(
+                first.physicsConfig,
+                firstEntryApproachSpeed,
+                GetPhysicalApproachSpeed(firstVelocity, firstToSecond));
+            float secondCounterPhysicalSpeed = SumoImpactResolver.ComputeCappedPhysicalImpactSpeed(
+                second.physicsConfig,
+                secondEntryApproachSpeed,
+                GetPhysicalApproachSpeed(secondVelocity, -firstToSecond));
+            SumoImpactTier firstCounterTier = SumoImpactResolver.ResolveImpactTier(
+                first.physicsConfig,
+                GetAttackerTierReferenceTopSpeed(first),
+                firstCounterPhysicalSpeed,
+                SumoImpactTier.Unknown,
+                false,
+                out _);
+            SumoImpactTier secondCounterTier = SumoImpactResolver.ResolveImpactTier(
+                second.physicsConfig,
+                GetAttackerTierReferenceTopSpeed(second),
+                secondCounterPhysicalSpeed,
+                SumoImpactTier.Unknown,
+                false,
+                out _);
+            bool firstCanCounterActiveFatso = SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                IsFatsoClass(first),
+                IsActiveFatsoAbility(second),
+                firstCounterTier);
+            bool secondCanCounterActiveFatso = SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                IsFatsoClass(second),
+                IsActiveFatsoAbility(first),
+                secondCounterTier);
 
-            SumoAttackerDecision attackerDecision = SumoImpactResolver.ResolveAttacker(
+            SumoAttackerDecision baseAttackerDecision = SumoImpactResolver.ResolveAttacker(
                 firstPressure,
                 secondPressure,
                 tieSpeedEpsilon,
@@ -3022,6 +3104,10 @@ namespace Sumo
                 false,
                 firstKey,
                 secondKey);
+            SumoAttackerDecision attackerDecision = SumoImpactResolver.ResolveHighSpeedFatsoCounterAttacker(
+                baseAttackerDecision,
+                firstCanCounterActiveFatso,
+                secondCanCounterActiveFatso);
 
             pairState.TieResolvedBy = attackerDecision.TieResolvedBy;
 
@@ -3113,7 +3199,20 @@ namespace Sumo
                 attacker,
                 victim,
                 SumoImpactResolver.ResolveTierShoveMultiplier(attacker.physicsConfig, selectedTier));
+            bool highSpeedFatsoCounter = SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                IsFatsoClass(attacker),
+                IsActiveFatsoAbility(victim),
+                selectedTier);
+            float victimIncomingPushMultiplierOverride = highSpeedFatsoCounter
+                ? SumoImpactResolver.ResolveHighSpeedFatsoIncomingMultiplier(
+                    ResolveClassIncomingResponseMultiplier(victim),
+                    true,
+                    selectedTier,
+                    attackerForwardSpeed,
+                    tierThresholds)
+                : 0f;
             pairState.ShoveForceMultiplier = shoveForceMultiplier;
+            pairState.VictimIncomingPushMultiplierOverride = victimIncomingPushMultiplierOverride;
 
             float impactActivationMinSpeed = attacker.physicsConfig != null
                 ? attacker.physicsConfig.ImpactActivationMinSpeed
@@ -3603,7 +3702,11 @@ namespace Sumo
                 return;
             }
 
-            ApplyVelocityDelta(victim, direction * nudgeDeltaV, mode);
+            ApplyVelocityDelta(
+                victim,
+                direction * nudgeDeltaV,
+                mode,
+                GetStateVictimIncomingPushMultiplierOverride(pairState));
         }
 
         private static void RetargetRamAttacker(
@@ -3651,6 +3754,7 @@ namespace Sumo
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
+            pairState.VictimIncomingPushMultiplierOverride = 0f;
             pairState.ContactDirection = direction;
             pairState.RamContactBlend = Mathf.Max(pairState.RamContactBlend, RamContactStartBlend);
             pairState.ReimpactSuppressedUntilHardBreak = true;
@@ -3846,7 +3950,11 @@ namespace Sumo
 
             if (victimKickDeltaV > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode))
             {
-                ApplyVelocityDelta(victim, direction * victimKickDeltaV, mode);
+                ApplyVelocityDelta(
+                    victim,
+                    direction * victimKickDeltaV,
+                    mode,
+                    GetStateVictimIncomingPushMultiplierOverride(pairState));
             }
 
             if (attackerKickDeltaV > 0.0001f && ShouldApplyPredictedAttackerRecoil(attacker, mode))
@@ -3943,7 +4051,11 @@ namespace Sumo
 
             if (victimDeltaVStep > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode))
             {
-                ApplyVelocityDelta(victim, direction * victimDeltaVStep, mode);
+                ApplyVelocityDelta(
+                    victim,
+                    direction * victimDeltaVStep,
+                    mode,
+                    GetStateVictimIncomingPushMultiplierOverride(pairState));
             }
 
             if (attackerDeltaVStep > 0.0001f && ShouldApplyPredictedAttackerRecoil(attacker, mode))
@@ -4096,6 +4208,7 @@ namespace Sumo
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.ShoveForceMultiplier = 1f;
+            pairState.VictimIncomingPushMultiplierOverride = 0f;
             pairState.RamContactBlend = 0f;
             pairState.InitialRamEnergy = 0f;
             pairState.RamEnergy = 0f;
@@ -4263,6 +4376,7 @@ namespace Sumo
                 InitialVictimDeltaV = 0f,
                 InitialAttackerDeltaV = 0f,
                 ShoveForceMultiplier = 1f,
+                VictimIncomingPushMultiplierOverride = 0f,
                 RamContactBlend = 0f,
                 MaxSeparationSinceBreak = 0f,
                 HasPendingEnter = false,
@@ -4761,6 +4875,17 @@ namespace Sumo
             return ResolveAppliedShoveForceMultiplier(pairState.ShoveForceMultiplier);
         }
 
+        private static float GetStateVictimIncomingPushMultiplierOverride(in SumoRamState pairState)
+        {
+            float multiplier = pairState.VictimIncomingPushMultiplierOverride;
+            if (float.IsNaN(multiplier) || float.IsInfinity(multiplier) || multiplier <= 0f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp(multiplier, 0.02f, 1f);
+        }
+
         private static float GetScaledArcadeBurstMaxDeltaVPerTick(
             SumoCollisionController a,
             SumoCollisionController b,
@@ -5048,7 +5173,11 @@ namespace Sumo
             return Mathf.Max(0.01f, source._sphereCollider.radius * maxAxis);
         }
 
-        private static void ApplyImpulse(SumoCollisionController controller, Vector3 impulse, SimulationMode mode)
+        private static void ApplyImpulse(
+            SumoCollisionController controller,
+            Vector3 impulse,
+            SimulationMode mode,
+            float incomingMultiplierOverride = 0f)
         {
             if (!CanApplyGameplayForces(controller, mode))
             {
@@ -5061,11 +5190,15 @@ namespace Sumo
             }
 
             controller._rigidbody.AddForce(
-                impulse * GetClassIncomingVelocityMultiplier(controller),
+                impulse * ResolveIncomingResponseMultiplier(controller, incomingMultiplierOverride),
                 ForceMode.Impulse);
         }
 
-        private static void ApplyAcceleration(SumoCollisionController controller, Vector3 acceleration, SimulationMode mode)
+        private static void ApplyAcceleration(
+            SumoCollisionController controller,
+            Vector3 acceleration,
+            SimulationMode mode,
+            float incomingMultiplierOverride = 0f)
         {
             if (!CanApplyGameplayForces(controller, mode))
             {
@@ -5078,7 +5211,7 @@ namespace Sumo
             }
 
             controller._rigidbody.AddForce(
-                acceleration * GetClassIncomingVelocityMultiplier(controller),
+                acceleration * ResolveIncomingResponseMultiplier(controller, incomingMultiplierOverride),
                 ForceMode.Acceleration);
         }
 

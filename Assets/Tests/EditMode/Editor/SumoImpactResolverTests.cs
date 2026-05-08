@@ -41,6 +41,117 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ResolveHighSpeedFatsoIncomingMultiplier_LowAndMidTiersKeepBaseResistance()
+        {
+            SumoImpactTierThresholds thresholds = new SumoImpactTierThresholds(10f, 7.7f, 9.2f);
+
+            Assert.AreEqual(
+                0.30f,
+                SumoImpactResolver.ResolveHighSpeedFatsoIncomingMultiplier(
+                    0.30f,
+                    true,
+                    SumoImpactTier.Low,
+                    6f,
+                    thresholds),
+                0.0001f);
+            Assert.AreEqual(
+                0.30f,
+                SumoImpactResolver.ResolveHighSpeedFatsoIncomingMultiplier(
+                    0.30f,
+                    true,
+                    SumoImpactTier.Mid,
+                    8.5f,
+                    thresholds),
+                0.0001f);
+        }
+
+        [Test]
+        public void ResolveHighSpeedFatsoIncomingMultiplier_HighTierStartPiercesToFloor()
+        {
+            SumoImpactTierThresholds thresholds = new SumoImpactTierThresholds(10f, 7.7f, 9.2f);
+
+            float multiplier = SumoImpactResolver.ResolveHighSpeedFatsoIncomingMultiplier(
+                0.30f,
+                true,
+                SumoImpactTier.High,
+                9.2f,
+                thresholds);
+
+            Assert.AreEqual(0.55f, multiplier, 0.0001f);
+        }
+
+        [Test]
+        public void ResolveHighSpeedFatsoIncomingMultiplier_MaxReferenceSpeedPiercesToCeiling()
+        {
+            SumoImpactTierThresholds thresholds = new SumoImpactTierThresholds(10f, 7.7f, 9.2f);
+
+            float multiplier = SumoImpactResolver.ResolveHighSpeedFatsoIncomingMultiplier(
+                0.30f,
+                true,
+                SumoImpactTier.High,
+                10f,
+                thresholds);
+
+            Assert.AreEqual(0.90f, multiplier, 0.0001f);
+        }
+
+        [Test]
+        public void ShouldUseHighSpeedFatsoCounter_RequiresActiveFatsoVictimAndNonFatsoAttacker()
+        {
+            Assert.IsTrue(SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                candidateIsFatso: false,
+                targetIsActiveFatso: true,
+                candidateTier: SumoImpactTier.High));
+            Assert.IsFalse(SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                candidateIsFatso: false,
+                targetIsActiveFatso: false,
+                candidateTier: SumoImpactTier.High));
+            Assert.IsFalse(SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                candidateIsFatso: true,
+                targetIsActiveFatso: true,
+                candidateTier: SumoImpactTier.High));
+            Assert.IsFalse(SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                candidateIsFatso: false,
+                targetIsActiveFatso: true,
+                candidateTier: SumoImpactTier.Mid));
+        }
+
+        [Test]
+        public void ResolveHighSpeedFatsoCounterAttacker_NonFatsoHighSpeedHitOverridesFatsoPressureFloor()
+        {
+            SumoImpactTier counterTier = SumoImpactResolver.ResolveImpactTier(
+                null,
+                attackerTopSpeed: 10f,
+                speed: 9.2f,
+                SumoImpactTier.Unknown,
+                false,
+                out _);
+            SumoAttackerDecision baseDecision = SumoImpactResolver.ResolveAttacker(
+                9.2f,
+                13.5f,
+                0.15f,
+                false,
+                false,
+                false,
+                1,
+                2);
+            bool firstCanCounterFatso = SumoImpactResolver.ShouldUseHighSpeedFatsoCounter(
+                candidateIsFatso: false,
+                targetIsActiveFatso: true,
+                candidateTier: counterTier);
+
+            SumoAttackerDecision resolvedDecision = SumoImpactResolver.ResolveHighSpeedFatsoCounterAttacker(
+                baseDecision,
+                firstCanCounterFatso,
+                false);
+
+            Assert.AreEqual(SumoImpactTier.High, counterTier);
+            Assert.AreEqual(SumoAttackerRole.Second, baseDecision.Role);
+            Assert.AreEqual(SumoAttackerRole.First, resolvedDecision.Role);
+            Assert.AreEqual(SumoTieResolvedBy.SpeedDelta, resolvedDecision.TieResolvedBy);
+        }
+
+        [Test]
         public void ComputeCappedPushTargetSpeed_RearPushDoesNotAddSpeeds()
         {
             float targetSpeed = SumoImpactResolver.ComputeCappedPushTargetSpeed(
@@ -136,7 +247,7 @@ namespace Sumo.Tests
         {
             Assert.AreEqual(2f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Low), 0.0001f);
             Assert.AreEqual(2f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Mid), 0.0001f);
-            Assert.AreEqual(3.4f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High), 0.0001f);
+            Assert.AreEqual(6.8f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High), 0.0001f);
             Assert.AreEqual(1f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Unknown), 0.0001f);
         }
 
@@ -175,7 +286,7 @@ namespace Sumo.Tests
                 requestedDeltaV: 5f,
                 maxDeltaVPerTick: 0.48f * highMultiplier);
 
-            Assert.AreEqual(1.632f, deltaV, 0.0001f);
+            Assert.AreEqual(3.264f, deltaV, 0.0001f);
         }
 
         [Test]
@@ -183,13 +294,13 @@ namespace Sumo.Tests
         {
             float highMultiplier = SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High);
 
-            Assert.AreEqual(0.34f, SumoImpactResolver.ApplyShoveForceMultiplier(0.10f, highMultiplier), 0.0001f);
+            Assert.AreEqual(0.68f, SumoImpactResolver.ApplyShoveForceMultiplier(0.10f, highMultiplier), 0.0001f);
         }
 
         [Test]
         public void ResolveShoveForceMultiplier_ClampsArcadePlusCeiling()
         {
-            Assert.AreEqual(5f, SumoImpactResolver.ResolveShoveForceMultiplier(99f), 0.0001f);
+            Assert.AreEqual(6.8f, SumoImpactResolver.ResolveShoveForceMultiplier(99f), 0.0001f);
         }
 
         [Test]

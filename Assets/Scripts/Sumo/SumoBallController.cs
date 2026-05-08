@@ -169,6 +169,8 @@ namespace Sumo
         public SumoPlayerClass AuthoritativeClass => GetReplicatedPlayerClass();
         public float AuthoritativeAbilityStamina01 => Mathf.Clamp01(AbilityStamina01);
         public bool AuthoritativeAbilityActive => AbilityActive;
+        public SumoPlayerClass SimulationClass => GetSimulationPlayerClass();
+        public bool IsSimulationFatsoAbilityActive => SimulationClass == SumoPlayerClass.Fatso && GetSimulationAbilityActive();
         public float ClassOutgoingPushMultiplier => ResolveOutgoingPushMultiplier();
         public float ClassIncomingPushMultiplier => ResolveIncomingPushMultiplier();
         public float ClassCombatSpeedMultiplier => ResolveCombatSpeedMultiplier();

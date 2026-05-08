@@ -123,7 +123,10 @@ namespace Sumo
         private const float DefaultBackstepDeadZoneShare01 = 0.02f;
         private const float DefaultLowTierShoveMultiplier = 2f;
         private const float DefaultMidTierShoveMultiplier = 2f;
-        private const float DefaultHighTierShoveMultiplier = 3.4f;
+        private const float DefaultHighTierShoveMultiplier = 6.8f;
+        private const float DefaultMaxShoveForceMultiplier = DefaultHighTierShoveMultiplier;
+        private const float DefaultHighSpeedFatsoCounterMinIncomingMultiplier = 0.55f;
+        private const float DefaultHighSpeedFatsoCounterMaxIncomingMultiplier = 0.90f;
 
         public static SumoAttackerDecision ResolveAttacker(
             float firstApproachSpeed,
@@ -146,6 +149,67 @@ namespace Sumo
             }
 
             return new SumoAttackerDecision(SumoAttackerRole.Neutral, SumoTieResolvedBy.NeutralWithinEpsilon);
+        }
+
+        public static bool ShouldUseHighSpeedFatsoCounter(
+            bool candidateIsFatso,
+            bool targetIsActiveFatso,
+            SumoImpactTier candidateTier)
+        {
+            return !candidateIsFatso
+                && targetIsActiveFatso
+                && candidateTier == SumoImpactTier.High;
+        }
+
+        public static SumoAttackerDecision ResolveHighSpeedFatsoCounterAttacker(
+            SumoAttackerDecision baseDecision,
+            bool firstCanCounterActiveFatso,
+            bool secondCanCounterActiveFatso)
+        {
+            if (firstCanCounterActiveFatso && !secondCanCounterActiveFatso)
+            {
+                return new SumoAttackerDecision(SumoAttackerRole.First, SumoTieResolvedBy.SpeedDelta);
+            }
+
+            if (secondCanCounterActiveFatso && !firstCanCounterActiveFatso)
+            {
+                return new SumoAttackerDecision(SumoAttackerRole.Second, SumoTieResolvedBy.SpeedDelta);
+            }
+
+            return baseDecision;
+        }
+
+        public static float ResolveHighSpeedFatsoIncomingMultiplier(
+            float baseIncomingMultiplier,
+            bool highSpeedCounterApplies,
+            SumoImpactTier impactTier,
+            float physicalImpactSpeed,
+            SumoImpactTierThresholds thresholds)
+        {
+            float resolvedBase = SanitizeFinite(baseIncomingMultiplier);
+            if (resolvedBase <= 0f)
+            {
+                resolvedBase = 1f;
+            }
+
+            resolvedBase = Mathf.Clamp(resolvedBase, 0.02f, 1f);
+            if (!highSpeedCounterApplies || impactTier != SumoImpactTier.High)
+            {
+                return resolvedBase;
+            }
+
+            float highStart = Mathf.Max(0f, thresholds.HighStart);
+            float tierReferenceSpeed = Mathf.Max(highStart + 0.01f, thresholds.TierRefSpeed);
+            float speed01 = Mathf.InverseLerp(
+                highStart,
+                tierReferenceSpeed,
+                SanitizeNonNegativeFinite(physicalImpactSpeed));
+            float piercedMultiplier = Mathf.Lerp(
+                DefaultHighSpeedFatsoCounterMinIncomingMultiplier,
+                DefaultHighSpeedFatsoCounterMaxIncomingMultiplier,
+                Mathf.Clamp01(speed01));
+
+            return Mathf.Clamp(Mathf.Max(resolvedBase, piercedMultiplier), 0.02f, 1f);
         }
 
         public static float ComputeCappedPushDeltaV(
@@ -223,7 +287,7 @@ namespace Sumo
 
         public static float ResolveShoveForceMultiplier(float multiplier)
         {
-            return Mathf.Clamp(SanitizeFinite(multiplier), 0.25f, 5f);
+            return Mathf.Clamp(SanitizeFinite(multiplier), 0.25f, DefaultMaxShoveForceMultiplier);
         }
 
         public static float ApplyShoveForceMultiplier(float value, float multiplier)
