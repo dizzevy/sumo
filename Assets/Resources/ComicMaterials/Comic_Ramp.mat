@@ -34,17 +34,23 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
+    - _CastShadowPatternScale: 3.4
+    - _CastShadowPatternStrength: 0
     - _Cull: 2
     - _Cutoff: 0.5
-    - _HalftoneScale: 7
-    - _HalftoneStrength: 0.16
-    - _InkWidth: 2.1
+    - _HalftoneScale: 0
+    - _HalftoneStrength: 0
+    - _InkWidth: 3
+    - _PatchScale: 3.4
+    - _PatchSoftness: 0.62
+    - _PatchStrength: 0.30
     - _ShadeSteps: 4
     - _Surface: 0
     m_Colors:
     - _BaseColor: {r: 0.50, g: 0.52, b: 0.54, a: 1}
     - _Color: {r: 0.50, g: 0.52, b: 0.54, a: 1}
+    - _HighlightColor: {r: 0.70, g: 0.72, b: 0.74, a: 1}
     - _InkColor: {r: 0.012, g: 0.01, b: 0.018, a: 1}
-    - _ShadowColor: {r: 0.32, g: 0.32, b: 0.32, a: 1}
+    - _ShadowColor: {r: 0.25, g: 0.27, b: 0.29, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

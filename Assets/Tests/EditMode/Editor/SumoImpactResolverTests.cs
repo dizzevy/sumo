@@ -136,7 +136,7 @@ namespace Sumo.Tests
         {
             Assert.AreEqual(2f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Low), 0.0001f);
             Assert.AreEqual(2f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Mid), 0.0001f);
-            Assert.AreEqual(3f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High), 0.0001f);
+            Assert.AreEqual(3.4f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High), 0.0001f);
             Assert.AreEqual(1f, SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.Unknown), 0.0001f);
         }
 
@@ -168,14 +168,14 @@ namespace Sumo.Tests
         }
 
         [Test]
-        public void ClampImpactDeltaVStep_HighTierUsesTripleBurstCap()
+        public void ClampImpactDeltaVStep_HighTierUsesArcadePlusBurstCap()
         {
             float highMultiplier = SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High);
             float deltaV = SumoImpactResolver.ClampImpactDeltaVStep(
                 requestedDeltaV: 5f,
-                maxDeltaVPerTick: 0.38f * highMultiplier);
+                maxDeltaVPerTick: 0.48f * highMultiplier);
 
-            Assert.AreEqual(1.14f, deltaV, 0.0001f);
+            Assert.AreEqual(1.632f, deltaV, 0.0001f);
         }
 
         [Test]
@@ -183,7 +183,13 @@ namespace Sumo.Tests
         {
             float highMultiplier = SumoImpactResolver.ResolveTierShoveMultiplier(null, SumoImpactTier.High);
 
-            Assert.AreEqual(0.30f, SumoImpactResolver.ApplyShoveForceMultiplier(0.10f, highMultiplier), 0.0001f);
+            Assert.AreEqual(0.34f, SumoImpactResolver.ApplyShoveForceMultiplier(0.10f, highMultiplier), 0.0001f);
+        }
+
+        [Test]
+        public void ResolveShoveForceMultiplier_ClampsArcadePlusCeiling()
+        {
+            Assert.AreEqual(5f, SumoImpactResolver.ResolveShoveForceMultiplier(99f), 0.0001f);
         }
 
         [Test]
@@ -198,9 +204,17 @@ namespace Sumo.Tests
         {
             float deltaV = SumoImpactResolver.ClampImpactDeltaVStep(
                 requestedDeltaV: 0.5f,
-                maxDeltaVPerTick: 0.38f);
+                maxDeltaVPerTick: 0.48f);
 
-            Assert.AreEqual(0.38f, deltaV, 0.0001f);
+            Assert.AreEqual(0.48f, deltaV, 0.0001f);
+        }
+
+        [Test]
+        public void ClampImpactDeltaVStep_NonFiniteOrNegativeValuesStaySafe()
+        {
+            Assert.AreEqual(0f, SumoImpactResolver.ClampImpactDeltaVStep(-2f, 0.48f), 0.0001f);
+            Assert.AreEqual(0f, SumoImpactResolver.ClampImpactDeltaVStep(float.PositiveInfinity, 0.48f), 0.0001f);
+            Assert.AreEqual(0f, SumoImpactResolver.ClampImpactDeltaVStep(0.48f, float.NaN), 0.0001f);
         }
 
         [Test]

@@ -230,6 +230,10 @@ namespace Sumo
             {
                 TryApplyJumperJump(definition);
             }
+            else if (selectedClass == SumoPlayerClass.Fatso)
+            {
+                ApplyPredictedFatsoActivationBurst(definition);
+            }
 
             _predictedScaleMultiplier = selectedClass == SumoPlayerClass.Fatso
                 ? Mathf.Max(0.01f, definition.ScaleMultiplier)
@@ -1231,15 +1235,21 @@ namespace Sumo
 
             if (pressedThisTick)
             {
+                bool startedAbility = false;
                 if (CanStartPredictedAbility())
                 {
                     _predictedAbilityActive = true;
                     _predictedAbilityStamina01 = FullAbilityStamina;
+                    startedAbility = true;
                 }
 
                 if (selectedClass == SumoPlayerClass.Jumper && _predictedAbilityActive && grounded)
                 {
                     TryApplyJumperJump(definition);
+                }
+                else if (selectedClass == SumoPlayerClass.Fatso && startedAbility)
+                {
+                    ApplyPredictedFatsoActivationBurst(definition);
                 }
             }
 
@@ -1389,6 +1399,21 @@ namespace Sumo
             }
 
             _collisionController?.ApplyFatsoActivationBurst();
+        }
+
+        private void ApplyPredictedFatsoActivationBurst(SumoPlayerClassDefinition definition)
+        {
+            if (definition.Class != SumoPlayerClass.Fatso)
+            {
+                return;
+            }
+
+            if (_collisionController == null)
+            {
+                CacheComponents();
+            }
+
+            _collisionController?.ApplyPredictedFatsoActivationBurst();
         }
 
         private SumoPlayerClass ResolveSelectedPlayerClass()
@@ -1905,12 +1930,17 @@ namespace Sumo
 
                 if (_sharedRuntimeMaterial.HasProperty("_ShadowColor"))
                 {
-                    _sharedRuntimeMaterial.SetColor("_ShadowColor", new Color(0.32f, 0.32f, 0.32f, 1f));
+                    _sharedRuntimeMaterial.SetColor("_ShadowColor", Color.Lerp(runtimeBallColor, new Color(0.035f, 0.03f, 0.055f, 1f), 0.58f));
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_HighlightColor"))
+                {
+                    _sharedRuntimeMaterial.SetColor("_HighlightColor", Color.Lerp(runtimeBallColor, Color.white, 0.38f));
                 }
 
                 if (_sharedRuntimeMaterial.HasProperty("_InkWidth"))
                 {
-                    _sharedRuntimeMaterial.SetFloat("_InkWidth", 2.8f);
+                    _sharedRuntimeMaterial.SetFloat("_InkWidth", 3.35f);
                 }
 
                 if (_sharedRuntimeMaterial.HasProperty("_ShadeSteps"))
@@ -1921,6 +1951,31 @@ namespace Sumo
                 if (_sharedRuntimeMaterial.HasProperty("_ComicMotionShadowStrength"))
                 {
                     _sharedRuntimeMaterial.SetFloat("_ComicMotionShadowStrength", comicMotionShadowStrength);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_HalftoneStrength"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_HalftoneStrength", 0f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_CastShadowPatternStrength"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_CastShadowPatternStrength", 0f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_PatchStrength"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_PatchStrength", 0.18f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_PatchScale"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_PatchScale", 2.4f);
+                }
+
+                if (_sharedRuntimeMaterial.HasProperty("_PatchSoftness"))
+                {
+                    _sharedRuntimeMaterial.SetFloat("_PatchSoftness", 0.72f);
                 }
             }
 
@@ -1971,6 +2026,8 @@ namespace Sumo
             targetRenderer.GetPropertyBlock(_materialPropertyBlock);
             _materialPropertyBlock.SetColor("_Color", classColor);
             _materialPropertyBlock.SetColor("_BaseColor", classColor);
+            _materialPropertyBlock.SetColor("_ShadowColor", Color.Lerp(classColor, new Color(0.035f, 0.03f, 0.055f, 1f), 0.58f));
+            _materialPropertyBlock.SetColor("_HighlightColor", Color.Lerp(classColor, Color.white, 0.38f));
             targetRenderer.SetPropertyBlock(_materialPropertyBlock);
             _lastAppliedClassRaw = classRaw;
         }

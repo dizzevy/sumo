@@ -22,9 +22,12 @@ namespace Sumo
 
         private bool _callbacksRegistered;
         private bool _abilityPressedBuffered;
+        private int _abilitySendHoldTicks;
         private int _abilitySequence;
         private float _yaw;
         private float _pitch = 15f;
+
+        private const int AbilityInputHoldTicks = 6;
 
         public float CameraYaw => _yaw;
         public float CameraPitch => _pitch;
@@ -40,6 +43,9 @@ namespace Sumo
         public override void Spawned()
         {
             _yaw = transform.eulerAngles.y;
+            _abilityPressedBuffered = false;
+            _abilitySendHoldTicks = 0;
+            _abilitySequence = 0;
 
             if (!HasInputAuthority || Runner == null)
             {
@@ -56,6 +62,9 @@ namespace Sumo
 
         public override void Despawned(NetworkRunner runner, bool hasState)
         {
+            _abilityPressedBuffered = false;
+            _abilitySendHoldTicks = 0;
+
             UnregisterCallbacks(runner);
 
             if (HasInputAuthority)
@@ -87,6 +96,7 @@ namespace Sumo
             if (WasAbilityPressedThisFrame())
             {
                 _abilityPressedBuffered = true;
+                _abilitySendHoldTicks = AbilityInputHoldTicks;
                 _abilitySequence++;
                 CacheBallControllerIfNeeded();
                 if (ballController != null)
@@ -117,10 +127,14 @@ namespace Sumo
             {
                 Move = moveInput,
                 CameraYaw = Mathf.Repeat(_yaw, 360f),
-                Buttons = ReadButtons(_abilityPressedBuffered),
+                Buttons = ReadButtons(_abilityPressedBuffered || _abilitySendHoldTicks > 0),
                 AbilitySequence = _abilitySequence
             };
             _abilityPressedBuffered = false;
+            if (_abilitySendHoldTicks > 0)
+            {
+                _abilitySendHoldTicks--;
+            }
 
             input.Set(data);
         }

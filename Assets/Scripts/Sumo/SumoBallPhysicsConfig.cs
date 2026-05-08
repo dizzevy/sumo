@@ -29,31 +29,31 @@ namespace Sumo
         [FormerlySerializedAs("maxEffectivePushSpeed")]
         [SerializeField] private float maxImpactSpeed = 10f;
         [FormerlySerializedAs("basePushImpulse")]
-        [SerializeField] private float baseImpactImpulse = 42f;
+        [SerializeField] private float baseImpactImpulse = 44f;
         [FormerlySerializedAs("maxPushImpulse")]
-        [SerializeField] private float maxImpactImpulse = 92f;
+        [SerializeField] private float maxImpactImpulse = 105f;
         [FormerlySerializedAs("initialImpactSpeedExponent")]
         [SerializeField] private float impactSpeedExponent = 1.85f;
         [FormerlySerializedAs("initialImpactTopSpeedBonus")]
-        [SerializeField] private float impactTopSpeedBonus = 1.45f;
+        [SerializeField] private float impactTopSpeedBonus = 1.6f;
         [FormerlySerializedAs("initialImpactAngleExponent")]
         [SerializeField] private float impactAngleExponent = 1.15f;
         [FormerlySerializedAs("headOnMultiplier")]
-        [SerializeField] private float headOnImpactMultiplier = 2.25f;
+        [SerializeField] private float headOnImpactMultiplier = 2.45f;
         [FormerlySerializedAs("glancingHitMultiplier")]
         [SerializeField] private float glancingImpactMultiplier = 0.3f;
         [SerializeField] private float relativeClosingBonus = 0.28f;
         [FormerlySerializedAs("initialImpactHighSpeedFloorScale")]
         [SerializeField] private float highSpeedReadableFloor = 0.62f;
         [SerializeField] private float firstImpactArcadeThreshold01 = 0.32f;
-        [SerializeField] private float firstImpactArcadeBoost = 5.6f;
-        [SerializeField] private float firstImpactArcadeCapBoost = 4.2f;
+        [SerializeField] private float firstImpactArcadeBoost = 6.2f;
+        [SerializeField] private float firstImpactArcadeCapBoost = 4.8f;
         [FormerlySerializedAs("initialImpactAttackerRecoilScale")]
         [SerializeField] private float impactAttackerRecoilScale = 0.20f;
         [FormerlySerializedAs("verticalImpulseMultiplier")]
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
-        [SerializeField] private float dashImpactMultiplier = 1.6f;
+        [SerializeField] private float dashImpactMultiplier = 1.85f;
         [SerializeField] private float impactBurstDuration = 0.18f;
         [SerializeField] private float firstImpactBurstFrontload = 0.42f;
         [SerializeField] private float firstImpactKickImpulseShare = 0.24f;
@@ -62,8 +62,8 @@ namespace Sumo
         [SerializeField] private float arcadeBurstMinSpeed01 = 0.5f;
         [SerializeField] private float arcadeBurstDashMinSpeed01 = 0.25f;
         [SerializeField] private float softShoveMaxDeltaVPerTick = 0.12f;
-        [SerializeField] private float softShoveEntryMaxDeltaVPerTick = 0.12f;
-        [SerializeField] private float arcadeBurstMaxDeltaVPerTick = 0.38f;
+        [SerializeField] private float softShoveEntryMaxDeltaVPerTick = 0.13f;
+        [SerializeField] private float arcadeBurstMaxDeltaVPerTick = 0.48f;
 
         [Header("Impact Tiering")]
         [SerializeField] private bool useNormalizedTierThresholds = true;
@@ -73,26 +73,26 @@ namespace Sumo
         [SerializeField] private float backstepDeadZoneShare01 = 0.02f;
         [SerializeField] private float lowTierShoveMultiplier = 2f;
         [SerializeField] private float midTierShoveMultiplier = 2f;
-        [SerializeField] private float highTierShoveMultiplier = 3f;
+        [SerializeField] private float highTierShoveMultiplier = 3.4f;
 
         [Header("Impact Arbitration")]
         [SerializeField] private float attackerTieSpeedEpsilon = 0.15f;
         [SerializeField] private bool resolveTieByLowerKey = true;
         [SerializeField] private int contactBreakGraceTicks = 6;
         [SerializeField] private float playerContactEnterPadding = 0.004f;
-        [SerializeField] private float playerContactExitPadding = 0.02f;
-        [SerializeField] private float playerContactPenetrationSlop = 0.01f;
-        [SerializeField] private float playerContactPositionCorrection = 0.85f;
-        [SerializeField] private float playerContactVelocityDamping = 1f;
+        [SerializeField] private float playerContactExitPadding = 0.026f;
+        [SerializeField] private float playerContactPenetrationSlop = 0.014f;
+        [SerializeField] private float playerContactPositionCorrection = 0.66f;
+        [SerializeField] private float playerContactVelocityDamping = 0.78f;
 
         [Header("Ramming")]
         [SerializeField] private float minRamStartSpeed = 2.4f;
         [SerializeField] private float minRamPressureSpeed = 1.6f;
         [SerializeField] private int maxRamDurationTicks = 34;
         [FormerlySerializedAs("ramBaseImpulsePerSecond")]
-        [SerializeField] private float ramBaseAcceleration = 14f;
+        [SerializeField] private float ramBaseAcceleration = 18f;
         [FormerlySerializedAs("ramMaxImpulsePerTick")]
-        [SerializeField] private float ramMaxAcceleration = 24f;
+        [SerializeField] private float ramMaxAcceleration = 30f;
         [FormerlySerializedAs("ramAttackerRecoilScale")]
         [SerializeField] private float ramAttackerDragScale = 0.24f;
         [FormerlySerializedAs("ramGlancingImpulseScale")]
@@ -101,24 +101,24 @@ namespace Sumo
         [FormerlySerializedAs("ramBudgetFromImpactScale")]
         [SerializeField] private float ramEnergyFromImpact = 0.2f;
         [FormerlySerializedAs("ramBudgetFromSpeedScale")]
-        [SerializeField] private float ramEnergyFromSpeed = 1.15f;
+        [SerializeField] private float ramEnergyFromSpeed = 1.5f;
         [FormerlySerializedAs("ramBudgetDashBonusScale")]
-        [SerializeField] private float ramEnergyFromDash = 0.4f;
+        [SerializeField] private float ramEnergyFromDash = 0.55f;
         [FormerlySerializedAs("minRamBudget")]
         [SerializeField] private float ramMinEnergy = 0.5f;
         [FormerlySerializedAs("maxRamBudget")]
-        [SerializeField] private float ramMaxEnergy = 7.5f;
+        [SerializeField] private float ramMaxEnergy = 7.6f;
         [FormerlySerializedAs("ramLowBudgetImpulseScale")]
         [SerializeField] private float ramMinForceScale = 0.18f;
         [SerializeField] private float ramMaxForceScale = 1.1f;
         [SerializeField] private float ramForceExponent = 0.7f;
-        [SerializeField] private float ramBaseDecayPerSecond = 1.5f;
-        [SerializeField] private float ramPressureDecayPerSecond = 1.25f;
+        [SerializeField] private float ramBaseDecayPerSecond = 1.55f;
+        [SerializeField] private float ramPressureDecayPerSecond = 1.35f;
         [FormerlySerializedAs("ramPoorAngleDecayPerSecond")]
         [SerializeField] private float ramAngleDecayPerSecond = 1.4f;
         [SerializeField] private float ramNoPressureDecayPerSecond = 4.8f;
         [FormerlySerializedAs("ramBudgetCostPerImpulse")]
-        [SerializeField] private float ramAccelerationEnergyCost = 0.14f;
+        [SerializeField] private float ramAccelerationEnergyCost = 0.85f;
         [FormerlySerializedAs("ramStopBudgetThreshold")]
         [SerializeField] private float ramStopEnergyThreshold = 0.08f;
 
@@ -336,7 +336,7 @@ namespace Sumo
             arcadeBurstDashMinSpeed01 = Mathf.Clamp01(arcadeBurstDashMinSpeed01);
             softShoveMaxDeltaVPerTick = Mathf.Clamp(softShoveMaxDeltaVPerTick, 0.005f, 0.2f);
             softShoveEntryMaxDeltaVPerTick = Mathf.Clamp(softShoveEntryMaxDeltaVPerTick, 0.005f, 0.3f);
-            arcadeBurstMaxDeltaVPerTick = Mathf.Clamp(arcadeBurstMaxDeltaVPerTick, softShoveMaxDeltaVPerTick, 0.4f);
+            arcadeBurstMaxDeltaVPerTick = Mathf.Clamp(arcadeBurstMaxDeltaVPerTick, softShoveMaxDeltaVPerTick, 0.55f);
             lowTierShare01 = Mathf.Clamp01(lowTierShare01);
             midTierShare01 = Mathf.Clamp(midTierShare01, 0f, 1f - lowTierShare01);
             tierHysteresisShare01 = Mathf.Clamp(tierHysteresisShare01, 0f, 0.25f);

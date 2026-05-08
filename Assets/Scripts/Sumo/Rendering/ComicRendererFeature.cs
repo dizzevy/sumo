@@ -2,9 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
-using UnityEngine.Rendering.RenderGraphModule.Util;
 using UnityEngine.Rendering.Universal;
-using static UnityEngine.Rendering.RenderGraphModule.Util.RenderGraphUtils;
 
 namespace Sumo.Rendering
 {
@@ -162,7 +160,15 @@ namespace Sumo.Rendering
             private static readonly int BloomThresholdId = Shader.PropertyToID("_ComicBloomThreshold");
             private static readonly int BloomIntensityId = Shader.PropertyToID("_ComicBloomIntensity");
             private static readonly int OutlineStrengthId = Shader.PropertyToID("_ComicOutlineStrength");
+            private static readonly int ScreenOutlineStrengthId = Shader.PropertyToID("_ComicScreenOutlineStrength");
+            private static readonly int ScreenOutlineThicknessId = Shader.PropertyToID("_ComicScreenOutlineThickness");
+            private static readonly int ScreenOutlineDepthSensitivityId = Shader.PropertyToID("_ComicScreenOutlineDepthSensitivity");
+            private static readonly int ScreenOutlineNormalSensitivityId = Shader.PropertyToID("_ComicScreenOutlineNormalSensitivity");
+            private static readonly int PaintPatchStrengthId = Shader.PropertyToID("_ComicPaintPatchStrength");
+            private static readonly int BlitTextureId = Shader.PropertyToID("_BlitTexture");
+            private static readonly int BlitScaleBiasId = Shader.PropertyToID("_BlitScaleBias");
             private static readonly int LiteModeId = Shader.PropertyToID("_ComicLiteMode");
+            private static readonly MaterialPropertyBlock SharedPropertyBlock = new MaterialPropertyBlock();
 
             private Material _material;
             private bool _enabled;
@@ -173,6 +179,7 @@ namespace Sumo.Rendering
                 renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing;
                 profilingSampler = new ProfilingSampler("Sumo Comic Composite");
                 requiresIntermediateTexture = true;
+                ConfigureInput(ScriptableRenderPassInput.Depth | ScriptableRenderPassInput.Normal);
             }
 
             public void Configure(bool enabled, bool liteMode, Material material)
@@ -205,11 +212,16 @@ namespace Sumo.Rendering
                 _material.SetFloat(PosterizeStrengthId, settings.posterizeStrength.value);
                 _material.SetFloat(PaletteStepsId, settings.paletteSteps.value);
                 _material.SetFloat(HalftoneScaleId, settings.halftoneScale.value);
-                _material.SetFloat(HalftoneIntensityId, settings.halftoneIntensity.value * liteScale);
-                _material.SetFloat(HatchIntensityId, settings.hatchIntensity.value * liteScale);
+                _material.SetFloat(HalftoneIntensityId, 0f);
+                _material.SetFloat(HatchIntensityId, 0f);
                 _material.SetFloat(BloomThresholdId, settings.bloomThreshold.value);
                 _material.SetFloat(BloomIntensityId, _liteMode ? 0f : settings.bloomIntensity.value);
                 _material.SetFloat(OutlineStrengthId, settings.outlineStrength.value);
+                _material.SetFloat(ScreenOutlineStrengthId, settings.screenOutlineStrength.value * liteScale);
+                _material.SetFloat(ScreenOutlineThicknessId, settings.screenOutlineThickness.value);
+                _material.SetFloat(ScreenOutlineDepthSensitivityId, settings.screenOutlineDepthSensitivity.value);
+                _material.SetFloat(ScreenOutlineNormalSensitivityId, settings.screenOutlineNormalSensitivity.value);
+                _material.SetFloat(PaintPatchStrengthId, settings.paintPatchStrength.value * liteScale);
                 _material.SetFloat(LiteModeId, _liteMode ? 1f : 0f);
 
                 TextureHandle source = resources.activeColorTexture;
@@ -218,9 +230,61 @@ namespace Sumo.Rendering
                 destinationDesc.clearBuffer = false;
                 TextureHandle destination = renderGraph.CreateTexture(destinationDesc);
 
-                BlitMaterialParameters blitParameters = new BlitMaterialParameters(source, destination, _material, 0);
-                renderGraph.AddBlitPass(blitParameters, "Sumo Comic Composite");
+                using (IRasterRenderGraphBuilder builder = renderGraph.AddRasterRenderPass<PassData>(
+                           "Sumo Comic Composite",
+                           out PassData passData,
+                           profilingSampler))
+                {
+                    passData.material = _material;
+                    passData.source = source;
+
+                    builder.UseTexture(passData.source, AccessFlags.Read);
+
+                    if (resources.cameraDepthTexture.IsValid())
+                    {
+                        passData.depth = resources.cameraDepthTexture;
+                        builder.UseTexture(passData.depth, AccessFlags.Read);
+                    }
+
+                    if (resources.cameraNormalsTexture.IsValid())
+                    {
+                        passData.normals = resources.cameraNormalsTexture;
+                        builder.UseTexture(passData.normals, AccessFlags.Read);
+                    }
+
+                    builder.SetRenderAttachment(destination, 0, AccessFlags.Write);
+                    builder.AllowGlobalStateModification(true);
+                    builder.UseAllGlobalTextures(true);
+                    builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
+                    {
+                        ExecuteComposite(context.cmd, data.source, data.material);
+                    });
+                }
+
                 resources.cameraColor = destination;
+            }
+
+            private static void ExecuteComposite(RasterCommandBuffer commandBuffer, RTHandle source, Material material)
+            {
+                SharedPropertyBlock.Clear();
+                SharedPropertyBlock.SetTexture(BlitTextureId, source);
+                SharedPropertyBlock.SetVector(BlitScaleBiasId, new Vector4(1f, 1f, 0f, 0f));
+                commandBuffer.DrawProcedural(
+                    Matrix4x4.identity,
+                    material,
+                    0,
+                    MeshTopology.Triangles,
+                    3,
+                    1,
+                    SharedPropertyBlock);
+            }
+
+            private sealed class PassData
+            {
+                public Material material;
+                public TextureHandle source;
+                public TextureHandle depth;
+                public TextureHandle normals;
             }
         }
     }

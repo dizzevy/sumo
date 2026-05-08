@@ -314,66 +314,66 @@ MonoBehaviour:
   minImpactSpeed: 2.2
   impactActivationMinSpeed: 0.25
   maxImpactSpeed: 10
-  baseImpactImpulse: 42
-  maxImpactImpulse: 92
+  baseImpactImpulse: 44
+  maxImpactImpulse: 108
   impactSpeedExponent: 1.65
-  impactTopSpeedBonus: 1.45
+  impactTopSpeedBonus: 1.6
   impactAngleExponent: 1.05
-  headOnImpactMultiplier: 2.25
+  headOnImpactMultiplier: 2.45
   glancingImpactMultiplier: 0.3
   relativeClosingBonus: 0.28
   highSpeedReadableFloor: 0.62
   firstImpactArcadeThreshold01: 0.32
-  firstImpactArcadeBoost: 5.6
-  firstImpactArcadeCapBoost: 4.2
+  firstImpactArcadeBoost: 6.2
+  firstImpactArcadeCapBoost: 4.8
   impactAttackerRecoilScale: 0.2
   impactVerticalLift: 0.02
-  dashImpactMultiplier: 1.6
+  dashImpactMultiplier: 1.85
   impactBurstDuration: 0.18
   firstImpactBurstFrontload: 0.42
   firstImpactKickImpulseShare: 0.24
   arcadeBurstMinSpeed01: 0.5
   arcadeBurstDashMinSpeed01: 0.25
   softShoveMaxDeltaVPerTick: 0.12
-  softShoveEntryMaxDeltaVPerTick: 0.12
-  arcadeBurstMaxDeltaVPerTick: 0.38
+  softShoveEntryMaxDeltaVPerTick: 0.13
+  arcadeBurstMaxDeltaVPerTick: 0.48
   useNormalizedTierThresholds: 1
   lowTierShare01: 0.77
   midTierShare01: 0.15
   tierHysteresisShare01: 0.02
   backstepDeadZoneShare01: 0.02
   lowTierShoveMultiplier: 2
-  midTierShoveMultiplier: 2
-  highTierShoveMultiplier: 3
+  midTierShoveMultiplier: 2.15
+  highTierShoveMultiplier: 3.4
   attackerTieSpeedEpsilon: 0.15
   resolveTieByLowerKey: 1
   contactBreakGraceTicks: 5
   playerContactEnterPadding: 0.004
-  playerContactExitPadding: 0.02
-  playerContactPenetrationSlop: 0.01
-  playerContactPositionCorrection: 0.85
-  playerContactVelocityDamping: 1
+  playerContactExitPadding: 0.026
+  playerContactPenetrationSlop: 0.014
+  playerContactPositionCorrection: 0.68
+  playerContactVelocityDamping: 0.78
   minRamStartSpeed: 3.3
   minRamPressureSpeed: 1.6
   maxRamDurationTicks: 34
-  ramBaseAcceleration: 16
-  ramMaxAcceleration: 26
+  ramBaseAcceleration: 18
+  ramMaxAcceleration: 30
   ramAttackerDragScale: 0.18
   ramGlancingForceScale: 0.35
   ramMinDirectionDot: 0.15
   ramEnergyFromImpact: 0.2
-  ramEnergyFromSpeed: 1.35
-  ramEnergyFromDash: 0.5
+  ramEnergyFromSpeed: 1.5
+  ramEnergyFromDash: 0.55
   ramMinEnergy: 0.45
-  ramMaxEnergy: 7.2
+  ramMaxEnergy: 7.6
   ramMinForceScale: 0.18
   ramMaxForceScale: 1.1
   ramForceExponent: 0.7
-  ramBaseDecayPerSecond: 1.3
-  ramPressureDecayPerSecond: 1
+  ramBaseDecayPerSecond: 1.55
+  ramPressureDecayPerSecond: 1.35
   ramAngleDecayPerSecond: 1.4
   ramNoPressureDecayPerSecond: 4
-  ramAccelerationEnergyCost: 0.75
+  ramAccelerationEnergyCost: 0.85
   ramStopEnergyThreshold: 0.08
   reengageBreakTicks: 4
   reengageDistance: 0.18

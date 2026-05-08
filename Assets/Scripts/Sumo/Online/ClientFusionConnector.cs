@@ -27,6 +27,8 @@ namespace Sumo.Online
         public async Task<ServerConnectionInfo> FindAvailableServerAsync(ServerSearchOptions options, CancellationToken token)
         {
             options = options ?? new ServerSearchOptions();
+            System.Diagnostics.Stopwatch searchWatch = System.Diagnostics.Stopwatch.StartNew();
+            bool firstSessionListLogged = false;
 
             await DisconnectAsync();
 
@@ -53,7 +55,9 @@ namespace Sumo.Online
                 throw new InvalidOperationException($"Failed to join server lobby: {error}");
             }
 
-            int pollDelayMs = Mathf.Max(100, Mathf.RoundToInt(Mathf.Max(0.1f, options.PollIntervalSeconds) * 1000f));
+            Debug.Log($"ClientFusionConnector: joined server lobby in {searchWatch.ElapsedMilliseconds}ms.");
+
+            int pollDelayMs = Mathf.Max(50, Mathf.RoundToInt(Mathf.Max(0.05f, options.PollIntervalSeconds) * 1000f));
 
             while (true)
             {
@@ -61,6 +65,8 @@ namespace Sumo.Online
 
                 if (TrySelectServer(_latestSessionList, options, out ServerConnectionInfo connectionInfo))
                 {
+                    Debug.Log(
+                        $"ClientFusionConnector: selected server session '{connectionInfo.SessionName}' after {searchWatch.ElapsedMilliseconds}ms.");
                     await DisconnectAsync();
                     return connectionInfo;
                 }
@@ -71,6 +77,14 @@ namespace Sumo.Online
 
                 if (completedTask == updateTask)
                 {
+                    List<SessionInfo> sessions = await updateTask;
+                    if (!firstSessionListLogged)
+                    {
+                        Debug.Log(
+                            $"ClientFusionConnector: first session list received with {sessions.Count} sessions after {searchWatch.ElapsedMilliseconds}ms.");
+                        firstSessionListLogged = true;
+                    }
+
                     _sessionListWaiter = CreateSessionListWaiter();
                 }
             }
@@ -90,9 +104,10 @@ namespace Sumo.Online
 
             await DisconnectAsync();
 
-            _runner = CreateRunner(true);
+            NetworkRunner runner = CreateRunner(true);
+            _runner = runner;
 
-            INetworkSceneManager sceneManager = _runner.GetComponent<NetworkSceneManagerDefault>();
+            INetworkSceneManager sceneManager = runner.GetComponent<NetworkSceneManagerDefault>();
 
             StartGameArgs args = new StartGameArgs
             {
@@ -117,7 +132,36 @@ namespace Sumo.Online
                 args.Address = netAddress;
             }
 
-            StartGameResult result = await _runner.StartGame(args);
+            System.Diagnostics.Stopwatch connectWatch = System.Diagnostics.Stopwatch.StartNew();
+            Debug.Log($"ClientFusionConnector: StartGame begin for session '{connectionInfo.SessionName}'.");
+
+            StartGameResult result;
+            try
+            {
+                result = await runner.StartGame(args);
+            }
+            catch
+            {
+                if (_runner == runner)
+                {
+                    await DisconnectAsync();
+                }
+                else
+                {
+                    ShutdownRunner(runner);
+                }
+
+                throw;
+            }
+
+            Debug.Log(
+                $"ClientFusionConnector: StartGame finished for session '{connectionInfo.SessionName}' in {connectWatch.ElapsedMilliseconds}ms. Ok={result.Ok}; Reason={result.ShutdownReason}; Error={result.ErrorMessage}");
+
+            if (_runner != runner)
+            {
+                ShutdownRunner(runner);
+                return result;
+            }
 
             if (!result.Ok)
             {
@@ -134,12 +178,23 @@ namespace Sumo.Online
                 return Task.CompletedTask;
             }
 
-            _runner.RemoveCallbacks(this);
-            _runner.Shutdown(true, ShutdownReason.Ok, false);
+            NetworkRunner runner = _runner;
             _runner = null;
+            ShutdownRunner(runner);
             NotifyConnectionClosed();
 
             return Task.CompletedTask;
+        }
+
+        private void ShutdownRunner(NetworkRunner runner)
+        {
+            if (runner == null)
+            {
+                return;
+            }
+
+            runner.RemoveCallbacks(this);
+            runner.Shutdown(true, ShutdownReason.Ok, false);
         }
 
         private void OnDestroy()

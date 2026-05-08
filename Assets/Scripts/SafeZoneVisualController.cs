@@ -421,12 +421,12 @@ namespace Sumo.Gameplay
 
             if (material.HasProperty("_InkColor"))
             {
-                material.SetColor("_InkColor", new Color(0.015f, 0.018f, 0.024f, Mathf.Clamp01(baseColor.a + 0.38f)));
+                material.SetColor("_InkColor", new Color(0.008f, 0.012f, 0.02f, Mathf.Clamp01(baseColor.a + 0.46f)));
             }
 
             if (material.HasProperty("_InkWidth"))
             {
-                material.SetFloat("_InkWidth", 1.6f);
+                material.SetFloat("_InkWidth", 2.15f);
             }
 
             if (material.HasProperty("_ShadeSteps"))
@@ -436,7 +436,37 @@ namespace Sumo.Gameplay
 
             if (material.HasProperty("_HalftoneStrength"))
             {
-                material.SetFloat("_HalftoneStrength", 0.18f);
+                material.SetFloat("_HalftoneStrength", 0f);
+            }
+
+            if (material.HasProperty("_CastShadowPatternStrength"))
+            {
+                material.SetFloat("_CastShadowPatternStrength", 0f);
+            }
+
+            if (material.HasProperty("_PatchStrength"))
+            {
+                material.SetFloat("_PatchStrength", 0.12f);
+            }
+
+            if (material.HasProperty("_PatchScale"))
+            {
+                material.SetFloat("_PatchScale", 3.2f);
+            }
+
+            if (material.HasProperty("_PatchSoftness"))
+            {
+                material.SetFloat("_PatchSoftness", 0.72f);
+            }
+
+            if (material.HasProperty("_ShadowColor"))
+            {
+                material.SetColor("_ShadowColor", Color.Lerp(baseColor, new Color(0.02f, 0.04f, 0.08f, baseColor.a), 0.56f));
+            }
+
+            if (material.HasProperty("_HighlightColor"))
+            {
+                material.SetColor("_HighlightColor", Color.Lerp(baseColor, Color.white, 0.45f));
             }
 
             if (material.HasProperty("_Mode"))

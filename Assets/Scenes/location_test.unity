@@ -419,56 +419,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
---- !u!21 &186318401
-Material:
-  serializedVersion: 8
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneFillMaterial
-  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords:
-  - _SURFACE_TYPE_TRANSPARENT
-  m_InvalidKeywords:
-  - _ALPHABLEND_ON
-  - _EMISSION
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 3000
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats:
-    - _Blend: 0
-    - _Cull: 0
-    - _Cutoff: 0.02
-    - _DstBlend: 10
-    - _HalftoneScale: 11
-    - _HalftoneStrength: 0.18
-    - _InkWidth: 1.6
-    - _ShadeSteps: 3
-    - _SrcBlend: 5
-    - _Surface: 1
-    - _ZWrite: 0
-    m_Colors:
-    - _BaseColor: {r: 0.14, g: 0.78, b: 1, a: 0.12}
-    - _Color: {r: 0.14, g: 0.78, b: 1, a: 0.12}
-    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.5}
-    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
 --- !u!1001 &195946028
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -5732,7 +5682,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 1737891905}
+  - {fileID: 1830466761}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6422,55 +6372,13 @@ MonoBehaviour:
   autoFindColliders: 1
   autoFindRenderers: 1
   controlledColliders:
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   - {fileID: 1008819788}
   - {fileID: 1867064434}
   - {fileID: 770556947}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   controlledRenderers:
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   - {fileID: 137820507}
   - {fileID: 137820505}
   - {fileID: 137820503}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
-  - {fileID: 0}
   _IsClosed:
     _value: 1
 --- !u!114 &833104829
@@ -7025,6 +6933,67 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
+--- !u!21 &1161528261
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SafeZoneBoundaryMaterial
+  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _SURFACE_TYPE_TRANSPARENT
+  m_InvalidKeywords:
+  - _ALPHABLEND_ON
+  - _EMISSION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Blend: 0
+    - _CastShadowPatternScale: 3.8
+    - _CastShadowPatternStrength: 0
+    - _CastShadowPosterizeSteps: 4
+    - _ComicMotionAmount: 0
+    - _ComicMotionShadowStrength: 0.08
+    - _ComicShadePhase: 0
+    - _Cull: 0
+    - _Cutoff: 0.02
+    - _DstBlend: 10
+    - _HalftoneScale: 0
+    - _HalftoneStrength: 0
+    - _InkWidth: 2.15
+    - _PatchScale: 3.2
+    - _PatchSoftness: 0.72
+    - _PatchStrength: 0.12
+    - _ShadeSteps: 3
+    - _SrcBlend: 5
+    - _Surface: 1
+    - _ZWrite: 0
+    m_Colors:
+    - _BaseColor: {r: 0.62, g: 0.95, b: 1, a: 0.34}
+    - _Color: {r: 0.62, g: 0.95, b: 1, a: 0.34}
+    - _ComicMotionDirection: {r: 0, g: 0, b: 1, a: 0}
+    - _HighlightColor: {r: 0.791, g: 0.97249997, b: 1, a: 0.63699996}
+    - _InkColor: {r: 0.008, g: 0.012, b: 0.02, a: 0.8}
+    - _ShadowColor: {r: 0.284, g: 0.4404, b: 0.4848, a: 0.34}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!1 &1228160790 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 50754954277266222, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
@@ -7095,7 +7064,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 1635559781}
+  - {fileID: 1161528261}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -7741,7 +7710,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  - {fileID: 2100000, guid: c851319fb068b5840a2af39951187e87, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -7836,6 +7805,7 @@ MonoBehaviour:
   playerPrefab:
     RawGuidValue: 882c359deab3ac74b8cde7f4c70976b9
   spawnPoints: []
+  preRoundBoxSpawner: {fileID: 0}
   fallbackSpawnCenter: {x: 0, y: 0, z: 0}
   fallbackSpawnRadius: 8
 --- !u!114 &1583835286
@@ -7939,14 +7909,14 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 2ce78ae376ca4aa4d8595c6550dc44bb, type: 3}
---- !u!21 &1635559781
+--- !u!21 &1641412200
 Material:
   serializedVersion: 8
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneBoundaryMaterial
+  m_Name: SafeZoneFillMaterial
   m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
@@ -7972,21 +7942,32 @@ Material:
     m_Ints: []
     m_Floats:
     - _Blend: 0
+    - _CastShadowPatternScale: 3.8
+    - _CastShadowPatternStrength: 0
+    - _CastShadowPosterizeSteps: 4
+    - _ComicMotionAmount: 0
+    - _ComicMotionShadowStrength: 0.08
+    - _ComicShadePhase: 0
     - _Cull: 0
     - _Cutoff: 0.02
     - _DstBlend: 10
-    - _HalftoneScale: 11
-    - _HalftoneStrength: 0.18
-    - _InkWidth: 1.6
+    - _HalftoneScale: 0
+    - _HalftoneStrength: 0
+    - _InkWidth: 2.15
+    - _PatchScale: 3.2
+    - _PatchSoftness: 0.72
+    - _PatchStrength: 0.12
     - _ShadeSteps: 3
     - _SrcBlend: 5
     - _Surface: 1
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.62, g: 0.95, b: 1, a: 0.34}
-    - _Color: {r: 0.62, g: 0.95, b: 1, a: 0.34}
-    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.72}
-    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
+    - _BaseColor: {r: 0.14, g: 0.78, b: 1, a: 0.12}
+    - _Color: {r: 0.14, g: 0.78, b: 1, a: 0.12}
+    - _ComicMotionDirection: {r: 0, g: 0, b: 1, a: 0}
+    - _HighlightColor: {r: 0.527, g: 0.879, b: 1, a: 0.516}
+    - _InkColor: {r: 0.008, g: 0.012, b: 0.02, a: 0.58}
+    - _ShadowColor: {r: 0.0728, g: 0.3656, b: 0.4848, a: 0.12}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
 --- !u!1 &1677777058
@@ -8032,7 +8013,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 186318401}
+  - {fileID: 1641412200}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -8236,56 +8217,6 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 8552134717624371188, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
---- !u!21 &1737891905
-Material:
-  serializedVersion: 8
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: SafeZoneParticlesMaterial
-  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
-  m_Parent: {fileID: 0}
-  m_ModifiedSerializedProperties: 0
-  m_ValidKeywords:
-  - _SURFACE_TYPE_TRANSPARENT
-  m_InvalidKeywords:
-  - _ALPHABLEND_ON
-  - _EMISSION
-  m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
-  m_DoubleSidedGI: 0
-  m_CustomRenderQueue: 3000
-  stringTagMap: {}
-  disabledShaderPasses: []
-  m_LockedProperties: 
-  m_SavedProperties:
-    serializedVersion: 3
-    m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: 0}
-        m_Scale: {x: 1, y: 1}
-        m_Offset: {x: 0, y: 0}
-    m_Ints: []
-    m_Floats:
-    - _Blend: 0
-    - _Cull: 0
-    - _Cutoff: 0.02
-    - _DstBlend: 10
-    - _HalftoneScale: 11
-    - _HalftoneStrength: 0.18
-    - _InkWidth: 1.6
-    - _ShadeSteps: 3
-    - _SrcBlend: 5
-    - _Surface: 1
-    - _ZWrite: 0
-    m_Colors:
-    - _BaseColor: {r: 0.75, g: 0.92, b: 1, a: 0.5}
-    - _Color: {r: 0.75, g: 0.92, b: 1, a: 0.5}
-    - _InkColor: {r: 0.015, g: 0.018, b: 0.024, a: 0.88}
-    - _ShadowColor: {r: 0.45, g: 0.54999995, b: 0.75, a: 1}
-  m_BuildTextureStacks: []
-  m_AllowLocking: 1
 --- !u!1 &1747514603
 GameObject:
   m_ObjectHideFlags: 0
@@ -8485,6 +8416,67 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: -7196802604745430461, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}
+--- !u!21 &1830466761
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SafeZoneParticlesMaterial
+  m_Shader: {fileID: 4800000, guid: 202e2a030cb242a4aa13bd68e867052b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _SURFACE_TYPE_TRANSPARENT
+  m_InvalidKeywords:
+  - _ALPHABLEND_ON
+  - _EMISSION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Blend: 0
+    - _CastShadowPatternScale: 3.8
+    - _CastShadowPatternStrength: 0
+    - _CastShadowPosterizeSteps: 4
+    - _ComicMotionAmount: 0
+    - _ComicMotionShadowStrength: 0.08
+    - _ComicShadePhase: 0
+    - _Cull: 0
+    - _Cutoff: 0.02
+    - _DstBlend: 10
+    - _HalftoneScale: 0
+    - _HalftoneStrength: 0
+    - _InkWidth: 2.15
+    - _PatchScale: 3.2
+    - _PatchSoftness: 0.72
+    - _PatchStrength: 0.12
+    - _ShadeSteps: 3
+    - _SrcBlend: 5
+    - _Surface: 1
+    - _ZWrite: 0
+    m_Colors:
+    - _BaseColor: {r: 0.75, g: 0.92, b: 1, a: 0.5}
+    - _Color: {r: 0.75, g: 0.92, b: 1, a: 0.5}
+    - _ComicMotionDirection: {r: 0, g: 0, b: 1, a: 0}
+    - _HighlightColor: {r: 0.8625, g: 0.95600003, b: 1, a: 0.725}
+    - _InkColor: {r: 0.008, g: 0.012, b: 0.02, a: 0.96000004}
+    - _ShadowColor: {r: 0.3412, g: 0.42720002, b: 0.4848, a: 0.5}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!1 &1860205995 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -7029948723529949830, guid: 488eb053e7212a243a7cdca4b5470bef, type: 3}

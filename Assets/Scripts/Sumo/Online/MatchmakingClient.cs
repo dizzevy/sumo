@@ -35,12 +35,27 @@ namespace Sumo.Online
         [SerializeField] private float connectRetryDelaySeconds = 0.5f;
 
         private const string PlayerIdKey = "sumo.player.id";
+        private const float ConnectAttemptTimeoutSeconds = 60f;
 
         private IMatchmakingService _service;
         private CancellationTokenSource _searchCts;
         private MatchTicket _activeTicket;
         private Task _currentFlowTask;
         private ClientFusionConnector _subscribedConnector;
+
+        private readonly struct ConnectAttemptResult
+        {
+            public readonly StartGameResult Result;
+            public readonly bool TimedOut;
+
+            public ConnectAttemptResult(StartGameResult result, bool timedOut)
+            {
+                Result = result;
+                TimedOut = timedOut;
+            }
+
+            public static ConnectAttemptResult Timeout => new ConnectAttemptResult(default, true);
+        }
 
         public event Action<MatchmakingClientState, string> StateChanged;
 
@@ -203,16 +218,16 @@ namespace Sumo.Online
 
             StartGameResult result = await ConnectWithRetryAsync(connection, token);
 
-            if (result.Ok)
+            if (!result.Ok)
             {
-                SetState(MatchmakingClientState.Connected, "Connected");
+                string error = BuildConnectionError(result);
+
+                SetState(MatchmakingClientState.Failed, $"Failed: {error}");
+                await fusionConnector.DisconnectAsync();
                 return;
             }
 
-            string error = BuildConnectionError(result);
-
-            SetState(MatchmakingClientState.Failed, $"Failed: {error}");
-            await fusionConnector.DisconnectAsync();
+            SetState(MatchmakingClientState.Connected, "Connected");
         }
 
         private async Task WaitForConnectedServerMatchStartAsync(ServerConnectionInfo connection, CancellationToken token)
@@ -223,7 +238,7 @@ namespace Sumo.Online
             {
                 token.ThrowIfCancellationRequested();
 
-                MatchRoundManager roundManager = FindObjectOfType<MatchRoundManager>(true);
+                MatchRoundManager roundManager = FindFirstObjectByType<MatchRoundManager>(FindObjectsInactive.Include);
                 if (roundManager == null
                     || roundManager.Runner == null
                     || !roundManager.TryGetState(out MatchState state))
@@ -270,7 +285,7 @@ namespace Sumo.Online
                 Region = bootstrapConfig != null ? bootstrapConfig.MockRegion : "auto",
                 MaxPlayers = bootstrapConfig != null ? bootstrapConfig.DefaultMaxPlayers : BootstrapConfig.TargetMaxPlayers,
                 RequiredPlayers = bootstrapConfig != null ? bootstrapConfig.MinimumPlayersToStart : 2,
-                PollIntervalSeconds = statusPollIntervalSeconds
+                PollIntervalSeconds = Mathf.Min(statusPollIntervalSeconds, 0.1f)
             };
         }
 
@@ -318,12 +333,34 @@ namespace Sumo.Online
             float retryWindow = Mathf.Max(0f, connectRetryWindowSeconds);
             int retryDelayMs = Mathf.Max(100, Mathf.RoundToInt(connectRetryDelaySeconds * 1000f));
             DateTime retryDeadlineUtc = DateTime.UtcNow.AddSeconds(retryWindow);
+            bool hasRetryWindow = retryWindow > 0.001f;
+            int attempt = 0;
 
             while (true)
             {
                 token.ThrowIfCancellationRequested();
 
-                StartGameResult result = await fusionConnector.ConnectAsync(connection, token);
+                attempt++;
+                float attemptTimeoutSeconds = ResolveConnectAttemptTimeoutSeconds();
+                ConnectAttemptResult attemptResult = await ConnectWithTimeoutAsync(connection, attemptTimeoutSeconds, token);
+                if (attemptResult.TimedOut)
+                {
+                    Debug.LogWarning(
+                        $"MatchmakingClient: connect attempt {attempt} to session '{connection?.SessionName}' timed out after {attemptTimeoutSeconds:0.#}s.");
+
+                    if (!hasRetryWindow || DateTime.UtcNow >= retryDeadlineUtc)
+                    {
+                        throw new TimeoutException(
+                            $"Connecting to dedicated server session '{connection?.SessionName}' timed out.");
+                    }
+
+                    SetState(MatchmakingClientState.Connecting, "Connecting...");
+                    int timeoutRemainingMs = Mathf.Max(0, Mathf.RoundToInt((float)(retryDeadlineUtc - DateTime.UtcNow).TotalMilliseconds));
+                    await Task.Delay(Mathf.Min(retryDelayMs, timeoutRemainingMs), token);
+                    continue;
+                }
+
+                StartGameResult result = attemptResult.Result;
                 if (result.Ok || !ShouldRetryConnection(result) || DateTime.UtcNow >= retryDeadlineUtc)
                 {
                     return result;
@@ -334,6 +371,44 @@ namespace Sumo.Online
                 int remainingMs = Mathf.Max(0, Mathf.RoundToInt((float)(retryDeadlineUtc - DateTime.UtcNow).TotalMilliseconds));
                 await Task.Delay(Mathf.Min(retryDelayMs, remainingMs), token);
             }
+        }
+
+        private async Task<ConnectAttemptResult> ConnectWithTimeoutAsync(
+            ServerConnectionInfo connection,
+            float timeoutSeconds,
+            CancellationToken token)
+        {
+            int timeoutMs = Mathf.Max(100, Mathf.RoundToInt(timeoutSeconds * 1000f));
+            using CancellationTokenSource attemptCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+            Task<StartGameResult> connectTask = fusionConnector.ConnectAsync(connection, attemptCts.Token);
+            Task timeoutTask = Task.Delay(timeoutMs, token);
+            Task completedTask = await Task.WhenAny(connectTask, timeoutTask);
+            if (completedTask == connectTask)
+            {
+                return new ConnectAttemptResult(await connectTask, timedOut: false);
+            }
+
+            token.ThrowIfCancellationRequested();
+            attemptCts.Cancel();
+            ObserveFaultedConnectTask(connectTask);
+            await fusionConnector.DisconnectAsync();
+            return ConnectAttemptResult.Timeout;
+        }
+
+        private static float ResolveConnectAttemptTimeoutSeconds()
+        {
+            return ConnectAttemptTimeoutSeconds;
+        }
+
+        private static void ObserveFaultedConnectTask(Task<StartGameResult> connectTask)
+        {
+            _ = connectTask.ContinueWith(
+                task =>
+                {
+                    _ = task.Exception;
+                },
+                TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private async Task CancelSearchAsync()

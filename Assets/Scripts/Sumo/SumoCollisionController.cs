@@ -41,8 +41,8 @@ namespace Sumo
         private const int LocalVictimCatchupReleaseTicks = 10;
         private const int LocalVictimImpactMinimumTicks = 4;
         private const int LocalVictimPeakHoldTicks = 8;
-        private const float LocalVictimImpactDirectionBlend = 0.4f;
-        private const float LocalVictimRamDirectionBlend = 0.14f;
+        private const float LocalVictimImpactDirectionBlend = 0.28f;
+        private const float LocalVictimRamDirectionBlend = 0.10f;
         private const float LocalVictimImpactTargetRiseScale = 1.05f;
         private const float LocalVictimRamTargetRiseScale = 0.82f;
         private const float LocalVictimTargetFallScale = 0.08f;
@@ -51,7 +51,7 @@ namespace Sumo
         private const float LocalVictimReleaseAssistDecayPerSecond = 6f;
         private const float NeutralContactSeparationSpeed = 1.2f;
         private const float NeutralContactMinClosingSpeed = 0.25f;
-        private const float AuthorityVictimPushDirectionBlend = 0.18f;
+        private const float AuthorityVictimPushDirectionBlend = 0.12f;
         private const float AuthorityVictimPushTargetDecayFloor = 0.92f;
         private const float AuthorityVictimPushAccelerationDecayFloor = 0.9f;
         private const float AuthorityVictimPushEnergyDecayFloor = 0.94f;
@@ -256,8 +256,8 @@ namespace Sumo
         private const float FallbackFirstImpactBurstFrontload = 0.42f;
         private const float FallbackFirstImpactKickShare = 0.24f;
         private const float FallbackSoftShoveMaxDeltaVPerTick = 0.12f;
-        private const float FallbackSoftShoveEntryMaxDeltaVPerTick = 0.12f;
-        private const float FallbackArcadeBurstMaxDeltaVPerTick = 0.38f;
+        private const float FallbackSoftShoveEntryMaxDeltaVPerTick = 0.13f;
+        private const float FallbackArcadeBurstMaxDeltaVPerTick = 0.48f;
         private const float ArcadeBurstAttackerRecoilMaxDeltaVPerTick = 0.10f;
         private const int InitialImpactRamGateTicks = 5;
         private const float FallbackAttackerReferenceTopSpeed = 10f;
@@ -267,30 +267,30 @@ namespace Sumo
         private const float RamContactStartBlend = 0.24f;
         private const float ActivePhaseContactSeparationEpsilon = 0.008f;
         private const float ActivePhaseContactExtraTolerance = 0.012f;
-        private const float PairDirectionBlend = 0.2f;
+        private const float PairDirectionBlend = 0.14f;
         private const int SoftStalePairTicks = 420;
         private const int HardStalePairTicks = 1200;
         private const float FallbackPlayerContactEnterPadding = 0.003f;
         private const float FallbackPlayerContactExitPadding = 0.024f;
         private const float FallbackPlayerContactPenetrationSlop = 0.01f;
-        private const float FallbackPlayerContactPositionCorrection = 0.85f;
-        private const float FallbackPlayerContactVelocityDamping = 1f;
-        private const float PredictedPenetrationResolveRate = 22f;
-        private const float PredictedPenetrationResolveMaxSpeed = 6f;
-        private const float AuthorityMaxPositionCorrectionPerTick = 0.05f;
-        private const float ActiveContactVelocityDampingScale = 0.32f;
-        private const float ActiveContactClosingDeadZone = 0.25f;
-        private const float ActiveContactPenetrationResolveRate = 16f;
-        private const float ActiveContactPenetrationResolveMaxSpeed = 3.4f;
-        private const float PredictedActiveCombatPenetrationResolveRate = 9f;
-        private const float PredictedActiveCombatPenetrationResolveMaxSpeed = 1.65f;
-        private const float PredictedActiveCombatPenetrationDeadZone = 0.012f;
+        private const float FallbackPlayerContactPositionCorrection = 0.66f;
+        private const float FallbackPlayerContactVelocityDamping = 0.78f;
+        private const float PredictedPenetrationResolveRate = 18f;
+        private const float PredictedPenetrationResolveMaxSpeed = 4.5f;
+        private const float AuthorityMaxPositionCorrectionPerTick = 0.035f;
+        private const float ActiveContactVelocityDampingScale = 0.24f;
+        private const float ActiveContactClosingDeadZone = 0.35f;
+        private const float ActiveContactPenetrationResolveRate = 12f;
+        private const float ActiveContactPenetrationResolveMaxSpeed = 2.6f;
+        private const float PredictedActiveCombatPenetrationResolveRate = 7f;
+        private const float PredictedActiveCombatPenetrationResolveMaxSpeed = 1.25f;
+        private const float PredictedActiveCombatPenetrationDeadZone = 0.018f;
         private const int ActiveCombatVictimImpactResponseTicks = 3;
         private const float ActiveCombatVictimImpactAuthorityResponseShare = 0.34f;
         private const float ActiveCombatVictimImpactPredictedResponseShare = 0.14f;
         private const float ActiveCombatVictimRamAuthorityResponseShare = 0.08f;
         private const float ActiveCombatVictimRamPredictedResponseShare = 0.02f;
-        private const float ActiveCombatPenetrationSlopBonus = 0.008f;
+        private const float ActiveCombatPenetrationSlopBonus = 0.012f;
         private const int PredictedRollbackHistoryTicks = 192;
         private const float LowTierRamSeedEnergyPadding = 0.01f;
         private const float FatsoActivationBurstContactPadding = 0.55f;
@@ -615,7 +615,7 @@ namespace Sumo
 
                     if (allowSoftHandoff)
                     {
-                        directionBlend = Mathf.Max(directionBlend, 0.26f);
+                        directionBlend = Mathf.Max(directionBlend, 0.18f);
                     }
 
                     Vector3 previousDirection = _localVictimCatchupDirection.sqrMagnitude > 0.0001f
@@ -657,15 +657,15 @@ namespace Sumo
                     _localVictimCatchupAcceleration = Mathf.MoveTowards(
                         _localVictimCatchupAcceleration,
                         sample.Acceleration,
-                        32f * dt);
+                        24f * dt);
                     _localVictimCatchupAssist01 = Mathf.MoveTowards(
                         _localVictimCatchupAssist01,
                         sample.Assist01,
-                        8f * dt);
+                        6f * dt);
                     _localVictimCatchupForceMultiplier = Mathf.MoveTowards(
                         _localVictimCatchupForceMultiplier,
                         ResolveAppliedShoveForceMultiplier(sample.ForceMultiplier),
-                        10f * dt);
+                        8f * dt);
 
                     if (_localVictimCatchupTargetSpeed > _localVictimCatchupPeakTargetSpeed)
                     {
@@ -1285,10 +1285,20 @@ namespace Sumo
 
         public int ApplyFatsoActivationBurst()
         {
+            return ApplyFatsoActivationBurst(SimulationMode.Authoritative);
+        }
+
+        internal int ApplyPredictedFatsoActivationBurst()
+        {
+            return ApplyFatsoActivationBurst(SimulationMode.Predicted);
+        }
+
+        private int ApplyFatsoActivationBurst(SimulationMode mode)
+        {
             CacheComponents();
             RegisterActiveController();
 
-            if (!CanApplyGameplayForces(this, SimulationMode.Authoritative)
+            if (!CanApplyGameplayForces(this, mode)
                 || Runner == null
                 || _rigidbody == null)
             {
@@ -1324,7 +1334,7 @@ namespace Sumo
                     other.CacheComponents();
                 }
 
-                if (!CanApplyGameplayForces(other, SimulationMode.Authoritative))
+                if (!CanApplyGameplayForces(other, mode))
                 {
                     continue;
                 }
@@ -1370,18 +1380,21 @@ namespace Sumo
                     FatsoActivationBurstMinStrength,
                     1f);
 
-                ApplyVelocityDelta(other, burstDirection * (FatsoActivationBurstDeltaV * strength), SimulationMode.Authoritative);
+                ApplyVelocityDelta(other, burstDirection * (FatsoActivationBurstDeltaV * strength), mode);
                 other._rigidbody.WakeUp();
 
-                PublishVictimPush(
-                    other,
-                    PushPhaseImpact,
-                    burstDirection,
-                    FatsoActivationBurstTargetSpeed * strength,
-                    FatsoActivationBurstAcceleration * strength,
-                    1f,
-                    FatsoActivationBurstForceMultiplier,
-                    currentTick);
+                if (mode == SimulationMode.Authoritative)
+                {
+                    PublishVictimPush(
+                        other,
+                        PushPhaseImpact,
+                        burstDirection,
+                        FatsoActivationBurstTargetSpeed * strength,
+                        FatsoActivationBurstAcceleration * strength,
+                        1f,
+                        FatsoActivationBurstForceMultiplier,
+                        currentTick);
+                }
 
                 affectedCount++;
             }
@@ -4787,7 +4800,7 @@ namespace Sumo
             float fromB = b != null && b.physicsConfig != null
                 ? b.physicsConfig.ArcadeBurstMaxDeltaVPerTick
                 : FallbackArcadeBurstMaxDeltaVPerTick;
-            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.005f, 0.4f);
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.005f, 0.55f);
         }
 
         private static float GetPairSoftShoveMaxDeltaVPerTick(SumoCollisionController a, SumoCollisionController b)

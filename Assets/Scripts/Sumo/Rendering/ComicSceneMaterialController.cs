@@ -155,7 +155,7 @@ namespace Sumo.Rendering
             }
 
             Color sourceColor = ResolveSourceColor(sourceMaterial, fallback);
-            Color comicColor = preserveSourceHue ? SimplifyPreservingHue(sourceColor) : sourceColor;
+            Color comicColor = preserveSourceHue ? ResolveCartoonBaseColor(sourceColor) : sourceColor;
 
             Material material = new Material(_comicShader)
             {
@@ -163,10 +163,12 @@ namespace Sumo.Rendering
                 color = comicColor
             };
 
+            ApplyComicStyle(material, fallback);
             ApplyColor(material, "_BaseColor", comicColor);
             ApplyColor(material, "_Color", comicColor);
-            ApplyColor(material, "_ShadowColor", ResolveNeutralShadowColor(comicColor));
-            ApplyComicStyle(material, fallback);
+            ApplyColor(material, "_ShadowColor", ResolvePaintedShadowColor(comicColor));
+            ApplyColor(material, "_HighlightColor", ResolvePaintedHighlightColor(comicColor));
+            ApplyColor(material, "_InkColor", ResolveInkColor(comicColor));
 
             _sourceMaterialCache[sourceMaterial] = material;
             return material;
@@ -352,17 +354,18 @@ namespace Sumo.Rendering
             }
         }
 
-        private static Color SimplifyPreservingHue(Color color)
+        private static Color ResolveCartoonBaseColor(Color color)
         {
             Color.RGBToHSV(color, out float h, out float s, out float v);
-            if (s <= 0.015f)
+
+            if (s <= 0.05f)
             {
-                float gray = Quantize(v, 8);
+                float gray = Quantize(Mathf.Clamp(v * 1.04f + 0.03f, 0.08f, 0.92f), 6);
                 return new Color(gray, gray, gray, color.a);
             }
 
-            float simplifiedS = Quantize(s, 8);
-            float simplifiedV = Quantize(v, 8);
+            float simplifiedS = Quantize(Mathf.Clamp01(s + 0.16f), 6);
+            float simplifiedV = Quantize(Mathf.Clamp(v * 1.06f + 0.03f, 0.18f, 0.94f), 6);
             Color simplified = Color.HSVToRGB(h, Mathf.Clamp01(simplifiedS), Mathf.Clamp01(simplifiedV));
             simplified.a = color.a;
             return simplified;
@@ -375,11 +378,46 @@ namespace Sumo.Rendering
             return Mathf.Round(clamped * maxStep) / maxStep;
         }
 
-        private static Color ResolveNeutralShadowColor(Color sourceColor)
+        private static Color ResolvePaintedShadowColor(Color sourceColor)
         {
-            float value = Mathf.Max(sourceColor.r, Mathf.Max(sourceColor.g, sourceColor.b));
-            float shadow = Mathf.Lerp(0.22f, 0.42f, Mathf.Clamp01(value));
-            return new Color(shadow, shadow, shadow, 1f);
+            Color.RGBToHSV(sourceColor, out float h, out float s, out float v);
+            if (s <= 0.05f)
+            {
+                float gray = Mathf.Clamp(v * 0.48f, 0.08f, 0.42f);
+                return new Color(gray, gray, gray, 1f);
+            }
+
+            float shadowSaturation = Mathf.Clamp01(s + 0.18f);
+            float shadowValue = Mathf.Clamp(v * 0.46f, 0.14f, 0.42f);
+            Color shadow = Color.HSVToRGB(h, shadowSaturation, shadowValue);
+            shadow.a = 1f;
+            return shadow;
+        }
+
+        private static Color ResolvePaintedHighlightColor(Color sourceColor)
+        {
+            Color.RGBToHSV(sourceColor, out float h, out float s, out float v);
+            if (s <= 0.05f)
+            {
+                float gray = Mathf.Clamp(v * 1.24f + 0.08f, 0.38f, 1f);
+                return new Color(gray, gray, gray, 1f);
+            }
+
+            float highlightSaturation = Mathf.Clamp01(s * 0.78f);
+            float highlightValue = Mathf.Clamp(v * 1.34f + 0.08f, 0.72f, 1f);
+            Color highlight = Color.HSVToRGB(h, highlightSaturation, highlightValue);
+            highlight.a = 1f;
+            return highlight;
+        }
+
+        private static Color ResolveInkColor(Color sourceColor)
+        {
+            Color ink = Color.Lerp(sourceColor, new Color(0.006f, 0.005f, 0.012f, 1f), 0.88f);
+            ink.r = Mathf.Min(ink.r, 0.035f);
+            ink.g = Mathf.Min(ink.g, 0.032f);
+            ink.b = Mathf.Min(ink.b, 0.045f);
+            ink.a = 1f;
+            return ink;
         }
 
         private static Color MultiplyRgb(Color a, Color b)
@@ -389,15 +427,25 @@ namespace Sumo.Rendering
 
         private static void ApplyComicStyle(Material material, Material fallback)
         {
-            CopyFloat(material, fallback, "_InkWidth", 2.1f);
+            CopyFloat(material, fallback, "_InkWidth", 2.8f);
             CopyFloat(material, fallback, "_ShadeSteps", 4f);
-            CopyFloat(material, fallback, "_HalftoneStrength", 0.16f);
-            CopyFloat(material, fallback, "_HalftoneScale", 10f);
+            SetFloat(material, "_HalftoneStrength", 0f);
+            SetFloat(material, "_HalftoneScale", 0f);
             CopyFloat(material, fallback, "_ComicMotionShadowStrength", 0.1f);
-            CopyFloat(material, fallback, "_CastShadowPatternStrength", 0.24f);
-            CopyFloat(material, fallback, "_CastShadowPatternScale", 0.16f);
+            SetFloat(material, "_CastShadowPatternStrength", 0f);
+            CopyFloat(material, fallback, "_CastShadowPatternScale", 3.4f);
             CopyFloat(material, fallback, "_CastShadowPosterizeSteps", 4f);
-            CopyColor(material, fallback, "_InkColor", new Color(0.012f, 0.01f, 0.016f, 1f));
+            CopyFloat(material, fallback, "_PatchStrength", 0.28f);
+            CopyFloat(material, fallback, "_PatchScale", 3.4f);
+            CopyFloat(material, fallback, "_PatchSoftness", 0.62f);
+        }
+
+        private static void SetFloat(Material material, string property, float value)
+        {
+            if (material != null && material.HasProperty(property))
+            {
+                material.SetFloat(property, value);
+            }
         }
 
         private static void CopyFloat(Material target, Material source, string property, float fallback)

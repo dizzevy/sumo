@@ -6,18 +6,22 @@ Shader "Sumo/ComicTransparent"
         _BaseColor("Base Color", Color) = (1, 1, 1, 0.5)
         _Color("Color", Color) = (1, 1, 1, 0.5)
         _ShadowColor("Shadow Depth", Color) = (0.38, 0.38, 0.38, 1)
+        _HighlightColor("Painted Highlight", Color) = (1.08, 1.05, 0.95, 1)
         _InkColor("Ink Color", Color) = (0.02, 0.025, 0.035, 0.7)
         _InkWidth("Ink Width", Range(0, 8)) = 1.4
         _ShadeSteps("Shade Steps", Range(2, 6)) = 3
-        _HalftoneStrength("Halftone Strength", Range(0, 1)) = 0.18
-        _HalftoneScale("Halftone Scale", Range(3, 32)) = 11
+        _HalftoneStrength("Halftone Strength", Range(0, 1)) = 0
+        _HalftoneScale("Halftone Scale", Range(0, 32)) = 0
         _ComicMotionDirection("Comic Motion Direction", Vector) = (0, 0, 1, 0)
         _ComicMotionAmount("Comic Motion Amount", Range(0, 1)) = 0
         _ComicShadePhase("Comic Shade Phase", Float) = 0
         _ComicMotionShadowStrength("Comic Motion Shadow Strength", Range(0, 1)) = 0.08
-        _CastShadowPatternStrength("Cast Shadow Pattern Strength", Range(0, 1)) = 0.18
-        _CastShadowPatternScale("Cast Shadow Dot Cell Size", Range(0.06, 0.7)) = 0.18
+        _CastShadowPatternStrength("Cast Shadow Pattern Strength", Range(0, 1)) = 0
+        _CastShadowPatternScale("Cast Shadow Patch Scale", Range(0.06, 12)) = 3.8
         _CastShadowPosterizeSteps("Cast Shadow Posterize Steps", Range(2, 6)) = 4
+        _PatchStrength("Paint Patch Strength", Range(0, 1)) = 0.16
+        _PatchScale("Paint Patch Scale", Range(0.8, 12)) = 3.8
+        _PatchSoftness("Paint Patch Softness", Range(0, 1)) = 0.68
         _Cutoff("Alpha Cutoff", Range(0, 1)) = 0.02
         _Surface("__surface", Float) = 1
         _Blend("__blend", Float) = 0
@@ -68,6 +72,7 @@ Shader "Sumo/ComicTransparent"
                 half4 _BaseColor;
                 half4 _Color;
                 half4 _ShadowColor;
+                half4 _HighlightColor;
                 half4 _InkColor;
                 half _InkWidth;
                 half _ShadeSteps;
@@ -80,6 +85,9 @@ Shader "Sumo/ComicTransparent"
                 half _CastShadowPatternStrength;
                 half _CastShadowPatternScale;
                 half _CastShadowPosterizeSteps;
+                half _PatchStrength;
+                half _PatchScale;
+                half _PatchSoftness;
                 half _Cutoff;
             CBUFFER_END
 
@@ -141,16 +149,49 @@ Shader "Sumo/ComicTransparent"
                 return dot(normalWS, motionDirection) * motion * 0.06h;
             }
 
-            half CastShadowPattern(float3 positionWS, half shadowTerm)
+            half Hash21(float2 p)
             {
-                half shadowMask = saturate(1.0h - shadowTerm);
-                float cellSize = max(0.04, _CastShadowPatternScale);
-                float2 cell = frac(positionWS.xz / cellSize) - 0.5;
-                float dotDistance = length(cell);
-                float dotAA = max(fwidth(dotDistance) * 1.35, 0.006);
-                half dots = 1.0h - smoothstep(0.11h - dotAA, 0.11h + dotAA, dotDistance);
-                half hatch = 1.0h - smoothstep(0.02h, 0.032h, abs(frac((positionWS.x + positionWS.z) / (cellSize * 2.2)) - 0.5h));
-                return saturate((dots * 0.9h + hatch * 0.1h) * shadowMask * _CastShadowPatternStrength);
+                p = frac(p * float2(127.1, 311.7));
+                p += dot(p, p + 37.19);
+                return frac(p.x * p.y);
+            }
+
+            half ValueNoise(float2 p)
+            {
+                float2 cell = floor(p);
+                float2 local = frac(p);
+                float2 blend = local * local * (3.0 - 2.0 * local);
+
+                half a = Hash21(cell);
+                half b = Hash21(cell + float2(1.0, 0.0));
+                half c = Hash21(cell + float2(0.0, 1.0));
+                half d = Hash21(cell + float2(1.0, 1.0));
+                return lerp(lerp(a, b, blend.x), lerp(c, d, blend.x), blend.y);
+            }
+
+            half PainterlyPatch(float3 positionWS)
+            {
+                float scale = max(0.8, _PatchScale);
+                float2 p = positionWS.xz / scale + positionWS.y * 0.13;
+                half broad = ValueNoise(p);
+                half soft = ValueNoise(p * 1.8 + 8.73);
+                half patch = saturate(broad * 0.72h + soft * 0.28h);
+                patch = lerp(floor(patch * 4.0h) / 3.0h, patch, saturate(_PatchSoftness) * 0.35h);
+                return patch * 2.0h - 1.0h;
+            }
+
+            half3 ApplyPaintedPalette(half3 baseColor, half mainTerm, float3 positionWS)
+            {
+                half3 shadowColor = baseColor * max(_ShadowColor.rgb, half3(0.03h, 0.03h, 0.03h));
+                half3 highlightColor = saturate(baseColor * max(_HighlightColor.rgb, half3(1.0h, 1.0h, 1.0h)));
+                half3 color = lerp(shadowColor, baseColor, mainTerm);
+
+                half patch = PainterlyPatch(positionWS) * saturate(_PatchStrength);
+                half shadowPatch = saturate(-patch) * (1.0h - mainTerm * 0.3h);
+                half highlightPatch = saturate(patch) * (0.3h + mainTerm * 0.7h);
+                color = lerp(color, shadowColor * 0.88h, shadowPatch);
+                color = lerp(color, highlightColor, highlightPatch);
+                return color;
             }
 
             half4 ToonFragment(Varyings input) : SV_Target
@@ -168,14 +209,9 @@ Shader "Sumo/ComicTransparent"
                 half band = ComicBand(ndotl, steps);
                 half shadowBand = ComicBand(mainLight.shadowAttenuation, max(2.0h, _CastShadowPosterizeSteps));
                 half mainTerm = ComicBand(saturate(0.28h + band * shadowBand * mainLight.distanceAttenuation), steps);
-                half shadowDepth = saturate(1.0h - Luminance(_ShadowColor.rgb));
-                half shade = lerp(1.0h - shadowDepth * 0.7h, 1.0h, mainTerm);
-                shade *= 1.0h - CastShadowPattern(input.positionWS, shadowBand) * 0.28h;
-                half3 color = baseColor.rgb * shade * max(0.04h, Luminance(mainLight.color));
+                half3 color = ApplyPaintedPalette(baseColor.rgb, mainTerm, input.positionWS) * max(0.04h, Luminance(mainLight.color));
 
-                float2 cell = frac(input.positionCS.xy / max(3.0h, _HalftoneScale)) - 0.5;
-                half dotMask = 1.0h - step(length(cell), lerp(0.1h, 0.34h, 1.0h - mainTerm)) * _HalftoneStrength * 0.55h;
-                color = MixFog(color * dotMask, input.fogFactor);
+                color = MixFog(color, input.fogFactor);
                 return half4(saturate(color), baseColor.a);
             }
             ENDHLSL
@@ -203,6 +239,7 @@ Shader "Sumo/ComicTransparent"
                 half4 _BaseColor;
                 half4 _Color;
                 half4 _ShadowColor;
+                half4 _HighlightColor;
                 half4 _InkColor;
                 half _InkWidth;
                 half _ShadeSteps;
@@ -215,6 +252,9 @@ Shader "Sumo/ComicTransparent"
                 half _CastShadowPatternStrength;
                 half _CastShadowPatternScale;
                 half _CastShadowPosterizeSteps;
+                half _PatchStrength;
+                half _PatchScale;
+                half _PatchSoftness;
                 half _Cutoff;
             CBUFFER_END
 
@@ -238,7 +278,7 @@ Shader "Sumo/ComicTransparent"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 VertexPositionInputs positionInputs = GetVertexPositionInputs(input.positionOS.xyz);
                 VertexNormalInputs normalInputs = GetVertexNormalInputs(input.normalOS);
-                output.positionCS = TransformWorldToHClip(positionInputs.positionWS + normalize(normalInputs.normalWS) * _InkWidth * 0.0045);
+                output.positionCS = TransformWorldToHClip(positionInputs.positionWS + normalize(normalInputs.normalWS) * _InkWidth * 0.0065);
                 return output;
             }
 
