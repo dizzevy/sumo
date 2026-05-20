@@ -256,6 +256,8 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   visualTarget: {fileID: 1428568767963707644}
+  simulateRemoteProxyPhysics: 1
+  predictRemoteProxyMovementInput: 0
   forceClientSimulationForRemotePlayers: 0
   mass: 1
   drag: 0.25
@@ -439,6 +441,7 @@ MonoBehaviour:
   enableClientPredictedImpact: 1
   enableClientPredictedRam: 1
   applyPredictedForcesToRemoteProxies: 1
+  enableVictimLocalCatchup: 0
   logImpacts: 0
   logStateMachine: 0
 --- !u!114 &-451421529677693719
@@ -474,7 +477,7 @@ MonoBehaviour:
   sensitivity: 2.5
   minPitch: -25
   maxPitch: 70
-  smoothing: 12
+  smoothing: 28
   obstructionMask:
     serializedVersion: 2
     m_Bits: 4294967295

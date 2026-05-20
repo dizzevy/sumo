@@ -26,7 +26,7 @@ namespace Sumo
         [SerializeField] private bool applyPredictedForcesToRemoteProxies = true;
 
         [Header("Victim Local Catchup")]
-        [SerializeField] private bool enableVictimLocalCatchup = true;
+        [SerializeField] private bool enableVictimLocalCatchup = false;
 
         [Header("Debug")]
         [SerializeField] private bool logImpacts;
@@ -1361,6 +1361,12 @@ namespace Sumo
                     continue;
                 }
 
+                if (mode == SimulationMode.Predicted
+                    && edgeSeparation > GetPairContactEnterPadding(this, other))
+                {
+                    continue;
+                }
+
                 float tightContactPadding = Mathf.Max(
                     FatsoActivationBurstTightContactPadding,
                     GetPairContactEnterPadding(this, other) + 0.04f);
@@ -2040,9 +2046,9 @@ namespace Sumo
             float closingSpeed = Vector3.Dot(firstVelocity - secondVelocity, contactDirection);
             float closingDeadZone = isActiveCombatContact ? ActiveContactClosingDeadZone : 0f;
 
-            // In predicted local-vs-proxy pairs we only stabilize the local body and let
-            // authority own the two-body response. This removes proxy feedback jitter on
-            // both attacker and victim screens.
+            // Predicted local-vs-proxy contact uses the same two-body velocity solve as
+            // authority. Gameplay forces are still gated so only the local attacker drives
+            // speculative combat impulses.
             if (!useLocalOnlyPredictedResponse && dampingInvMassSum > 0.0001f && closingSpeed > closingDeadZone)
             {
                 float impulseMagnitude = (closingSpeed - closingDeadZone)
@@ -2130,12 +2136,7 @@ namespace Sumo
             SimulationMode mode,
             bool isActiveCombatContact)
         {
-            if (mode != SimulationMode.Predicted)
-            {
-                return false;
-            }
-
-            return isActiveCombatContact;
+            return false;
         }
 
         private static void ApplyNeutralContactSeparation(
@@ -2451,11 +2452,9 @@ namespace Sumo
                 return other.HasStateAuthority;
             }
 
-            // In predicted mode the local attacker still needs contact data against
-            // remote proxies so it can stop cleanly at the victim surface, but we do
-            // not require the proxy itself to be client-simulated. The predicted force
-            // application path still only affects the local player, so victim visuals
-            // remain smooth.
+            // Predicted pairs are owned by the local input player and require a
+            // simulated remote proxy so the victim can receive contact impulse
+            // prediction without also replaying stale movement input.
             return !other.HasStateAuthority
                 && other.ballController != null;
         }
@@ -2472,12 +2471,7 @@ namespace Sumo
                 return selfKey < otherKey;
             }
 
-            if (selfKey < otherKey)
-            {
-                return true;
-            }
-
-            return !other.HasInputAuthority;
+            return HasInputAuthority && !other.HasInputAuthority;
         }
 
         private static void EnsureNativePlayerCollisionSuppressed(
@@ -2764,6 +2758,18 @@ namespace Sumo
                 liveDecision = new SumoAttackerDecision(SumoAttackerRole.First, SumoTieResolvedBy.SpeedDelta);
             }
 
+            liveDecision = ResolvePredictedLocalAttackerDecision(
+                liveDecision,
+                attacker,
+                victim,
+                liveDirection,
+                attackerVelocity,
+                victimVelocity,
+                attackerForwardSpeed,
+                victimCounterPressure,
+                tieSpeedEpsilon,
+                mode);
+
             if (!liveDecision.HasAttacker)
             {
                 ApplyNeutralContactSeparation(attacker, victim, liveDirection, liveClosingSpeed, mode);
@@ -2859,7 +2865,7 @@ namespace Sumo
 
             if (ramTick.HasForce && cappedVictimAcceleration > 0.0001f)
             {
-                if (ShouldApplyPredictedVictimPush(attacker, victim, mode))
+                if (ShouldApplyPredictedVictimPush(attacker, victim, mode, hasContact))
                 {
                     ApplyAcceleration(
                         victim,
@@ -3108,6 +3114,17 @@ namespace Sumo
                 baseAttackerDecision,
                 firstCanCounterActiveFatso,
                 secondCanCounterActiveFatso);
+            attackerDecision = ResolvePredictedLocalAttackerDecision(
+                attackerDecision,
+                first,
+                second,
+                firstToSecond,
+                firstVelocity,
+                secondVelocity,
+                firstPressure,
+                secondPressure,
+                tieSpeedEpsilon,
+                mode);
 
             pairState.TieResolvedBy = attackerDecision.TieResolvedBy;
 
@@ -3697,7 +3714,7 @@ namespace Sumo
                 victimForwardSpeed,
                 GetScaledSoftShoveEntryMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier),
                 shoveForceMultiplier);
-            if (nudgeDeltaV <= 0.0001f || !ShouldApplyPredictedVictimPush(attacker, victim, mode))
+            if (nudgeDeltaV <= 0.0001f || !ShouldApplyPredictedVictimPush(attacker, victim, mode, true))
             {
                 return;
             }
@@ -3948,7 +3965,7 @@ namespace Sumo
                 pairState.InitialAttackerDeltaV * speedScaledShare,
                 GetScaledAttackerRecoilMaxDeltaVPerTick(shoveForceMultiplier));
 
-            if (victimKickDeltaV > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode))
+            if (victimKickDeltaV > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode, true))
             {
                 ApplyVelocityDelta(
                     victim,
@@ -4049,7 +4066,7 @@ namespace Sumo
                 pairState.InitialAttackerDeltaV * segmentWeight,
                 GetScaledAttackerRecoilMaxDeltaVPerTick(shoveForceMultiplier));
 
-            if (victimDeltaVStep > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode))
+            if (victimDeltaVStep > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode, hasContact))
             {
                 ApplyVelocityDelta(
                     victim,
@@ -4116,6 +4133,63 @@ namespace Sumo
             return Mathf.Lerp(legacyIntegral, frontLoadedIntegral, frontload);
         }
 
+        private static SumoAttackerDecision ResolvePredictedLocalAttackerDecision(
+            SumoAttackerDecision currentDecision,
+            SumoCollisionController first,
+            SumoCollisionController second,
+            Vector3 firstToSecond,
+            Vector3 firstVelocity,
+            Vector3 secondVelocity,
+            float firstPressure,
+            float secondPressure,
+            float tieSpeedEpsilon,
+            SimulationMode mode)
+        {
+            if (mode != SimulationMode.Predicted
+                || first == null
+                || second == null
+                || firstToSecond.sqrMagnitude < 0.0001f)
+            {
+                return currentDecision;
+            }
+
+            bool firstIsLocalAttacker = first.HasInputAuthority && !second.HasInputAuthority;
+            bool secondIsLocalAttacker = second.HasInputAuthority && !first.HasInputAuthority;
+            if (!firstIsLocalAttacker && !secondIsLocalAttacker)
+            {
+                return currentDecision;
+            }
+
+            SumoCollisionController local = firstIsLocalAttacker ? first : second;
+            SumoCollisionController remote = firstIsLocalAttacker ? second : first;
+            Vector3 localToRemote = firstIsLocalAttacker ? firstToSecond : -firstToSecond;
+            Vector3 localVelocity = firstIsLocalAttacker ? firstVelocity : secondVelocity;
+            float localPressure = firstIsLocalAttacker ? firstPressure : secondPressure;
+            float remotePressure = firstIsLocalAttacker ? secondPressure : firstPressure;
+            float localIntentPressure = GetIntentApproachSpeed(local, localToRemote, localVelocity);
+            float minLocalPressure = GetPredictedLocalAttackerMinPressure(local);
+
+            return SumoImpactResolver.ResolvePredictedLocalAttacker(
+                isPredicted: true,
+                currentDecision: currentDecision,
+                localRole: firstIsLocalAttacker ? SumoAttackerRole.First : SumoAttackerRole.Second,
+                localHasInputAuthority: local.HasInputAuthority,
+                remoteHasInputAuthority: remote != null && remote.HasInputAuthority,
+                localPressure: localPressure,
+                localIntentPressure: localIntentPressure,
+                remotePressure: remotePressure,
+                minLocalPressure: minLocalPressure,
+                tieSpeedEpsilon: tieSpeedEpsilon);
+        }
+
+        private static float GetPredictedLocalAttackerMinPressure(SumoCollisionController local)
+        {
+            float minPressure = local != null && local.physicsConfig != null
+                ? local.physicsConfig.ImpactActivationMinSpeed
+                : FallbackImpactActivationMinSpeed;
+            return Mathf.Max(0.05f, SanitizeNonNegativeFinite(minPressure));
+        }
+
         // Predicted combat should only run on the client that owns the attacker input.
         // Running the ram state on the victim client causes speculative push/correction
         // fights and visible teleport loops.
@@ -4135,12 +4209,13 @@ namespace Sumo
                 && !victim.HasInputAuthority;
         }
 
-        // Prediction may still keep local blocking/presentation state, but remote proxy
-        // gameplay shove is opt-in because speculative two-body velocity changes look jerky.
+        // Prediction may still keep local blocking/presentation state, but gameplay shove
+        // must be contact-bound so network push envelopes never become hidden catchup force.
         private static bool ShouldApplyPredictedVictimPush(
             SumoCollisionController attacker,
             SumoCollisionController victim,
-            SimulationMode mode)
+            SimulationMode mode,
+            bool hasLocalContact)
         {
             if (mode != SimulationMode.Predicted)
             {
@@ -4151,19 +4226,15 @@ namespace Sumo
                 isPredicted: true,
                 attackerHasInputAuthority: attacker != null && attacker.HasInputAuthority,
                 victimHasInputAuthority: victim != null && victim.HasInputAuthority,
-                victimCanApplyPredictedProxyForces: victim != null && victim.CanApplyPredictedProxyForces());
+                victimCanApplyPredictedProxyForces: victim != null && victim.CanApplyPredictedProxyForces(),
+                hasLocalContact: hasLocalContact);
         }
 
-        // Predicted attacker recoil stays disabled so clients do not introduce extra
-        // two-body feedback jitter. Server authority still owns the final combat result.
         private static bool ShouldApplyPredictedAttackerRecoil(SumoCollisionController attacker, SimulationMode mode)
         {
-            if (mode != SimulationMode.Predicted)
-            {
-                return true;
-            }
-
-            return false;
+            return SumoImpactResolver.ShouldApplyPredictedAttackerRecoil(
+                isPredicted: mode == SimulationMode.Predicted,
+                attackerHasInputAuthority: attacker != null && attacker.HasInputAuthority);
         }
 
         private static void SetRamDepleted(ref SumoRamState pairState, bool contactActive, int currentTick)

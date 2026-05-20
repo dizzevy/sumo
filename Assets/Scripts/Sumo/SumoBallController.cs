@@ -33,6 +33,8 @@ namespace Sumo
         [SerializeField] private Transform visualTarget;
 
         [Header("Network Physics")]
+        [SerializeField] private bool simulateRemoteProxyPhysics = true;
+        [SerializeField] private bool predictRemoteProxyMovementInput = false;
         [SerializeField] private bool forceClientSimulationForRemotePlayers = false;
 
         [Header("Rigidbody")]
@@ -354,18 +356,7 @@ namespace Sumo
             ApplyClassPresentation();
             ApplyComicMotionPresentation();
 
-            if (ShouldEnableRemoteProxySimulation()
-                && Runner != null
-                && Runner.IsClient
-                && Object != null
-                && !HasStateAuthority)
-            {
-                Runner.SetIsSimulated(Object, true);
-                if (_rigidbody != null)
-                {
-                    _rigidbody.isKinematic = false;
-                }
-            }
+            EnsureRemoteProxySimulationState();
         }
 
         public override void FixedUpdateNetwork()
@@ -374,6 +365,8 @@ namespace Sumo
             {
                 return;
             }
+
+            EnsureRemoteProxySimulationState();
 
             if (!TryResolveMovementCommand(out MovementCommand command))
             {
@@ -815,6 +808,12 @@ namespace Sumo
 
         public bool IsRemoteProxyPredictionActive()
         {
+            return IsRemoteProxySimulationActive()
+                && IsRemoteProxyContactPredictionEnabled();
+        }
+
+        private bool IsRemoteProxySimulationActive()
+        {
             return ShouldEnableRemoteProxySimulation()
                 && Runner != null
                 && Runner.IsClient
@@ -824,19 +823,57 @@ namespace Sumo
                 && Object.IsInSimulation;
         }
 
+        private bool IsRemoteProxyMovementPredictionActive()
+        {
+            return predictRemoteProxyMovementInput && IsRemoteProxySimulationActive();
+        }
+
         private bool ShouldEnableRemoteProxySimulation()
         {
-            if (forceClientSimulationForRemotePlayers)
+            if (simulateRemoteProxyPhysics || forceClientSimulationForRemotePlayers)
             {
                 return true;
             }
 
-            if (_collisionController == null)
+            return IsRemoteProxyContactPredictionEnabled();
+        }
+
+        private bool IsRemoteProxyContactPredictionEnabled()
+        {
+            if (_collisionController == null || _rigidbody == null)
             {
                 CacheComponents();
             }
 
             return _collisionController != null && _collisionController.ShouldPredictRemoteProxyForces();
+        }
+
+        private void EnsureRemoteProxySimulationState()
+        {
+            if (!ShouldEnableRemoteProxySimulation()
+                || Runner == null
+                || !Runner.IsClient
+                || Object == null
+                || HasStateAuthority
+                || HasInputAuthority)
+            {
+                return;
+            }
+
+            if (!Object.IsInSimulation)
+            {
+                Runner.SetIsSimulated(Object, true);
+            }
+
+            if (_collisionController == null || _rigidbody == null)
+            {
+                CacheComponents();
+            }
+
+            if (_rigidbody != null && _rigidbody.isKinematic)
+            {
+                _rigidbody.isKinematic = false;
+            }
         }
 
         private bool TryResolveMovementCommand(out MovementCommand command)
@@ -882,7 +919,7 @@ namespace Sumo
                 return true;
             }
 
-            if (!IsRemoteProxyPredictionActive())
+            if (!IsRemoteProxyMovementPredictionActive())
             {
                 return false;
             }

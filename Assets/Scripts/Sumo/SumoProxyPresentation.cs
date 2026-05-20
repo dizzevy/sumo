@@ -28,9 +28,9 @@ namespace Sumo
         [SerializeField] private bool forceInterpolationTargetEachFrame = true;
 
         [Header("Smoothing Profiles")]
-        [SerializeField] private bool enableLocalExtraSmoothing = true;
-        [SerializeField] private bool forceContinuousLocalBallSmoothing = true;
-        [SerializeField] private bool enableProxyExtraSmoothing = true;
+        [SerializeField] private bool enableLocalExtraSmoothing = false;
+        [SerializeField] private bool forceContinuousLocalBallSmoothing = false;
+        [SerializeField] private bool enableProxyExtraSmoothing = false;
         [SerializeField] [Range(0f, 1f)] private float authoritativeRemoteBaseBlend = 0.68f;
         [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMinBlend = 0.65f;
         [SerializeField] [Range(0f, 1f)] private float remoteVictimPushMaxBlend = 0.80f;
@@ -38,22 +38,22 @@ namespace Sumo
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile localVictimProfile = default;
         [SerializeField] private SumoVisualSmoothing.SmoothingProfile proxyVictimProfile = default;
-        [SerializeField] private bool enableFirstImpactVisualLaunch = true;
+        [SerializeField] private bool enableFirstImpactVisualLaunch = false;
         [SerializeField] private float firstImpactVisualLaunchDuration = 0.18f;
         [SerializeField] private float firstImpactVisualLaunchReleaseDuration = 0.28f;
         [SerializeField] [Range(0f, 1f)] private float firstImpactVisualLaunchBlend = 0.55f;
 
         [Header("Victim Push Smoothing")]
-        [SerializeField] private bool enableVictimPushSmoothing = true;
-        [SerializeField] private bool applyVictimPushSmoothingToLocalPlayer = true;
-        [SerializeField] private bool allowLocalVictimSignalSmoothing = true;
+        [SerializeField] private bool enableVictimPushSmoothing = false;
+        [SerializeField] private bool applyVictimPushSmoothingToLocalPlayer = false;
+        [SerializeField] private bool allowLocalVictimSignalSmoothing = false;
         [SerializeField] private float victimMinSmoothingDuration = 0.80f;
         [SerializeField] private float victimMaxSmoothingDuration = 2.60f;
         [SerializeField] private float victimSmoothingExtension = 0.70f;
         [SerializeField] private bool triggerVictimSmoothingOnPlayerCollision = false;
         [SerializeField] private float collisionTriggeredStrength = 0.7f;
         [SerializeField] private float collisionTriggerCooldown = 0.08f;
-        [SerializeField] private bool triggerVictimSmoothingOnCorrectionSpike = true;
+        [SerializeField] private bool triggerVictimSmoothingOnCorrectionSpike = false;
         [SerializeField] private float correctionSpikeStartDistance = 0.02f;
         [SerializeField] private float correctionSpikeMaxDistance = 0.20f;
         [SerializeField] private float correctionSpikeTriggerCooldown = 0.06f;
@@ -66,7 +66,7 @@ namespace Sumo
         [SerializeField] private float ultraVictimContactHoldSeconds = 0.90f;
 
         [Header("Remote Victim View Lock")]
-        [SerializeField] private bool enableRemoteVictimViewLock = true;
+        [SerializeField] private bool enableRemoteVictimViewLock = false;
         [SerializeField] [Range(0f, 1f)] private float remoteVictimViewLockActivationThreshold = 0.01f;
         [SerializeField] private float remoteVictimViewLockMinDuration = 0.35f;
         [SerializeField] private float remoteVictimViewLockMaxDuration = 1.40f;
@@ -100,7 +100,24 @@ namespace Sumo
 
         public Transform VisualShell => visualShell != null ? visualShell : transform;
         public Transform InterpolationAnchor => interpolationAnchor != null ? interpolationAnchor : transform;
-        public Transform CameraTarget => cameraTarget != null ? cameraTarget : VisualShell;
+        public Transform CameraTarget
+        {
+            get
+            {
+                if (IsLocalPresentation())
+                {
+                    Transform renderTarget = ResolveLocalCameraRenderTarget();
+                    if (cameraTarget != null && cameraTarget.parent == renderTarget)
+                    {
+                        return cameraTarget;
+                    }
+
+                    return renderTarget;
+                }
+
+                return cameraTarget != null ? cameraTarget : VisualShell;
+            }
+        }
 
         private void Reset()
         {
@@ -187,6 +204,7 @@ namespace Sumo
             }
 
             ApplyDynamicSmoothingProfile(localPresentation, false);
+            ResolveCameraTarget(localPresentation);
 
             if (forceInterpolationTargetEachFrame && networkRigidbody != null)
             {
@@ -256,7 +274,7 @@ namespace Sumo
             ApplyPresentationMode(localPresentation, directLocalMode, true);
             ApplyDynamicSmoothingProfile(localPresentation, true);
 
-            ResolveCameraTarget();
+            ResolveCameraTarget(localPresentation);
             _initialized = true;
         }
 
@@ -408,22 +426,18 @@ namespace Sumo
             return anchor;
         }
 
-        private void ResolveCameraTarget()
+        private void ResolveCameraTarget(bool localPresentation)
         {
-            if (visualShell == null)
+            Transform parent = ResolveCameraTargetParent(localPresentation);
+            if (parent == null || parent == transform)
             {
                 cameraTarget = null;
                 return;
             }
 
-            if (cameraTarget != null)
-            {
-                return;
-            }
-
             if (!createCameraTargetIfMissing)
             {
-                cameraTarget = visualShell;
+                cameraTarget = parent;
                 return;
             }
 
@@ -438,13 +452,53 @@ namespace Sumo
                 cameraTarget = targetObject.transform;
             }
 
-            if (!cameraTarget.IsChildOf(visualShell))
+            if (cameraTarget.parent != parent)
             {
-                cameraTarget.SetParent(visualShell, false);
+                cameraTarget.SetParent(parent, false);
             }
 
             cameraTarget.localPosition = cameraTargetLocalOffset;
             cameraTarget.localRotation = Quaternion.identity;
+        }
+
+        private Transform ResolveCameraTargetParent(bool localPresentation)
+        {
+            if (!localPresentation)
+            {
+                return visualShell != null && visualShell != transform ? visualShell : null;
+            }
+
+            return ResolveLocalCameraRenderTarget();
+        }
+
+        private Transform ResolveLocalCameraRenderTarget()
+        {
+            Transform interpolationTarget = networkRigidbody != null ? networkRigidbody.InterpolationTarget : null;
+            return SelectLocalCameraRenderTarget(transform, interpolationTarget, interpolationAnchor, visualShell);
+        }
+
+        public static Transform SelectLocalCameraRenderTarget(
+            Transform root,
+            Transform networkInterpolationTarget,
+            Transform interpolationAnchor,
+            Transform visualShell)
+        {
+            if (networkInterpolationTarget != null && networkInterpolationTarget != root)
+            {
+                return networkInterpolationTarget;
+            }
+
+            if (interpolationAnchor != null && interpolationAnchor != root)
+            {
+                return interpolationAnchor;
+            }
+
+            if (visualShell != null && visualShell != root)
+            {
+                return visualShell;
+            }
+
+            return root;
         }
 
         private void ApplyPresentationMode(bool localPresentation, bool directLocalMode, bool snapNow)

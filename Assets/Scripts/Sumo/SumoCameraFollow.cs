@@ -14,8 +14,9 @@ namespace Sumo
         [SerializeField] private float sensitivity = 2.5f;
         [SerializeField] private float minPitch = -25f;
         [SerializeField] private float maxPitch = 70f;
-        [SerializeField] private float positionSmoothing = 14f;
-        [SerializeField] private float rotationSmoothing = 16f;
+        [SerializeField] private float positionSmoothing = 28f;
+        [SerializeField] private float rotationSmoothing = 0f;
+        [SerializeField] private float followSnapDistance = 1.5f;
 
         [Header("Collision")]
         [SerializeField] private LayerMask obstructionMask = ~0;
@@ -40,8 +41,11 @@ namespace Sumo
         private Camera _cameraInstance;
         private AudioListener _audioListener;
         private Transform _resolvedFollowTarget;
+        private Transform _lastSmoothedFollowTarget;
+        private Vector3 _smoothedFollowPosition;
         private bool _ownsCameraInstance;
         private bool _wasLocalAuthority;
+        private bool _hasSmoothedFollowPosition;
         private float _shakeTrauma;
         private float _shakeSeed;
 
@@ -61,6 +65,7 @@ namespace Sumo
         {
             ReleaseOwnedCamera();
             _wasLocalAuthority = false;
+            ResetFollowSmoothing();
         }
 
         public void ApplyLegacySettings(
@@ -96,6 +101,7 @@ namespace Sumo
             ClampParameters();
             ConfigureInputLook();
             _resolvedFollowTarget = null;
+            ResetFollowSmoothing();
         }
 
         public void AddImpactShake(float normalizedStrength)
@@ -135,11 +141,13 @@ namespace Sumo
             {
                 ConfigureInputLook();
                 _resolvedFollowTarget = null;
+                ResetFollowSmoothing();
             }
 
             if (_cameraInstance == null)
             {
                 CreateOrReuseLocalCamera();
+                ResetFollowSmoothing();
                 if (disableSceneMainCamera)
                 {
                     DisableSceneCameraIfNeeded();
@@ -156,7 +164,8 @@ namespace Sumo
             float yaw = _input != null ? _input.CameraYaw : transform.eulerAngles.y;
             float pitch = _input != null ? _input.CameraPitch : 15f;
 
-            Vector3 followPosition = _resolvedFollowTarget != null ? _resolvedFollowTarget.position : transform.position;
+            Vector3 rawFollowPosition = _resolvedFollowTarget != null ? _resolvedFollowTarget.position : transform.position;
+            Vector3 followPosition = ResolveSmoothedFollowPosition(rawFollowPosition);
             Vector3 pivot = followPosition + Vector3.up * height;
             Quaternion targetRotation = Quaternion.Euler(pitch, yaw, 0f);
 
@@ -240,6 +249,61 @@ namespace Sumo
             }
 
             _resolvedFollowTarget = transform;
+        }
+
+        private Vector3 ResolveSmoothedFollowPosition(Vector3 targetPosition)
+        {
+            bool targetChanged = _resolvedFollowTarget != _lastSmoothedFollowTarget;
+            Vector3 smoothed = SmoothFollowPosition(
+                _smoothedFollowPosition,
+                targetPosition,
+                positionSmoothing,
+                Time.unscaledDeltaTime,
+                followSnapDistance,
+                _hasSmoothedFollowPosition && !targetChanged);
+
+            _smoothedFollowPosition = smoothed;
+            _lastSmoothedFollowTarget = _resolvedFollowTarget;
+            _hasSmoothedFollowPosition = true;
+            return smoothed;
+        }
+
+        public static Vector3 SmoothFollowPosition(
+            Vector3 currentPosition,
+            Vector3 targetPosition,
+            float sharpness,
+            float deltaTime,
+            float snapDistance,
+            bool hasCurrentPosition)
+        {
+            if (!hasCurrentPosition || ShouldSnapFollowPosition(currentPosition, targetPosition, snapDistance))
+            {
+                return targetPosition;
+            }
+
+            float blend = ComputeRenderSmoothingBlend(sharpness, deltaTime);
+            return Vector3.Lerp(currentPosition, targetPosition, blend);
+        }
+
+        public static float ComputeRenderSmoothingBlend(float sharpness, float deltaTime)
+        {
+            if (sharpness <= 0f || deltaTime <= 0f)
+            {
+                return 1f;
+            }
+
+            return 1f - Mathf.Exp(-sharpness * deltaTime);
+        }
+
+        public static bool ShouldSnapFollowPosition(Vector3 currentPosition, Vector3 targetPosition, float snapDistance)
+        {
+            float safeSnapDistance = Mathf.Max(0f, snapDistance);
+            if (safeSnapDistance <= 0f)
+            {
+                return false;
+            }
+
+            return (targetPosition - currentPosition).sqrMagnitude >= safeSnapDistance * safeSnapDistance;
         }
 
         private void CreateOrReuseLocalCamera()
@@ -373,6 +437,13 @@ namespace Sumo
             _ownsCameraInstance = false;
         }
 
+        private void ResetFollowSmoothing()
+        {
+            _lastSmoothedFollowTarget = null;
+            _smoothedFollowPosition = Vector3.zero;
+            _hasSmoothedFollowPosition = false;
+        }
+
         private void ClampParameters()
         {
             distance = Mathf.Max(0.1f, distance);
@@ -380,7 +451,8 @@ namespace Sumo
             sensitivity = Mathf.Max(0f, sensitivity);
             maxPitch = Mathf.Max(minPitch, maxPitch);
             positionSmoothing = Mathf.Max(0.01f, positionSmoothing);
-            rotationSmoothing = Mathf.Max(0.01f, rotationSmoothing);
+            rotationSmoothing = Mathf.Max(0f, rotationSmoothing);
+            followSnapDistance = Mathf.Max(0f, followSnapDistance);
             obstructionRadius = Mathf.Max(0f, obstructionRadius);
             obstructionPadding = Mathf.Max(0f, obstructionPadding);
             shakeDecayPerSecond = Mathf.Max(0.01f, shakeDecayPerSecond);

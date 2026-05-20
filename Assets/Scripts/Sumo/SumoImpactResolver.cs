@@ -331,12 +331,62 @@ namespace Sumo
             bool isPredicted,
             bool attackerHasInputAuthority,
             bool victimHasInputAuthority,
-            bool victimCanApplyPredictedProxyForces)
+            bool victimCanApplyPredictedProxyForces,
+            bool hasLocalContact)
         {
             return !isPredicted
                 || (attackerHasInputAuthority
                     && !victimHasInputAuthority
-                    && victimCanApplyPredictedProxyForces);
+                    && victimCanApplyPredictedProxyForces
+                    && hasLocalContact);
+        }
+
+        public static SumoAttackerDecision ResolvePredictedLocalAttacker(
+            bool isPredicted,
+            SumoAttackerDecision currentDecision,
+            SumoAttackerRole localRole,
+            bool localHasInputAuthority,
+            bool remoteHasInputAuthority,
+            float localPressure,
+            float localIntentPressure,
+            float remotePressure,
+            float minLocalPressure,
+            float tieSpeedEpsilon)
+        {
+            if (!isPredicted
+                || !localHasInputAuthority
+                || remoteHasInputAuthority
+                || (localRole != SumoAttackerRole.First && localRole != SumoAttackerRole.Second))
+            {
+                return currentDecision;
+            }
+
+            float minimum = Mathf.Max(0f, SanitizeFinite(minLocalPressure));
+            float pressure = SanitizeNonNegativeFinite(localPressure);
+            float intentPressure = SanitizeNonNegativeFinite(localIntentPressure);
+            float remote = SanitizeNonNegativeFinite(remotePressure);
+            float epsilon = Mathf.Max(0f, SanitizeFinite(tieSpeedEpsilon));
+
+            bool hasForwardIntent = intentPressure >= minimum;
+            bool hasLocalPressure = Mathf.Max(pressure, intentPressure) >= minimum;
+            if (!hasLocalPressure)
+            {
+                return currentDecision;
+            }
+
+            if (hasForwardIntent || pressure + epsilon >= remote)
+            {
+                return new SumoAttackerDecision(localRole, SumoTieResolvedBy.SpeedDelta);
+            }
+
+            return currentDecision;
+        }
+
+        public static bool ShouldApplyPredictedAttackerRecoil(
+            bool isPredicted,
+            bool attackerHasInputAuthority)
+        {
+            return !isPredicted || attackerHasInputAuthority;
         }
 
         public static SumoImpactTier ResolveImpactTier(

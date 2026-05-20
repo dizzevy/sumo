@@ -1,5 +1,7 @@
+using System.Reflection;
 using NUnit.Framework;
 using Sumo;
+using UnityEngine;
 
 namespace Sumo.Tests
 {
@@ -329,23 +331,212 @@ namespace Sumo.Tests
         }
 
         [Test]
-        public void ShouldApplyPredictedVictimPush_AllowsOnlyAttackerOwnedRemoteProxy()
+        public void ShouldApplyPredictedVictimPush_RequiresContactAndAttackerOwnedRemoteProxy()
         {
             Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedVictimPush(
                 isPredicted: true,
                 attackerHasInputAuthority: true,
                 victimHasInputAuthority: false,
-                victimCanApplyPredictedProxyForces: true));
+                victimCanApplyPredictedProxyForces: true,
+                hasLocalContact: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldApplyPredictedVictimPush(
+                isPredicted: true,
+                attackerHasInputAuthority: true,
+                victimHasInputAuthority: false,
+                victimCanApplyPredictedProxyForces: true,
+                hasLocalContact: false));
             Assert.IsFalse(SumoImpactResolver.ShouldApplyPredictedVictimPush(
                 isPredicted: true,
                 attackerHasInputAuthority: true,
                 victimHasInputAuthority: true,
-                victimCanApplyPredictedProxyForces: true));
+                victimCanApplyPredictedProxyForces: true,
+                hasLocalContact: true));
             Assert.IsFalse(SumoImpactResolver.ShouldApplyPredictedVictimPush(
                 isPredicted: true,
                 attackerHasInputAuthority: false,
                 victimHasInputAuthority: false,
-                victimCanApplyPredictedProxyForces: true));
+                victimCanApplyPredictedProxyForces: true,
+                hasLocalContact: true));
+            Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedVictimPush(
+                isPredicted: false,
+                attackerHasInputAuthority: false,
+                victimHasInputAuthority: true,
+                victimCanApplyPredictedProxyForces: false,
+                hasLocalContact: false));
+        }
+
+        [Test]
+        public void SelectLocalCameraRenderTarget_PrefersInterpolationTargetOverRawRoot()
+        {
+            GameObject root = new GameObject("root");
+            GameObject interpolationTarget = new GameObject("interpolationTarget");
+            GameObject interpolationAnchor = new GameObject("interpolationAnchor");
+            GameObject visualShell = new GameObject("visualShell");
+
+            try
+            {
+                Transform selected = SumoProxyPresentation.SelectLocalCameraRenderTarget(
+                    root.transform,
+                    interpolationTarget.transform,
+                    interpolationAnchor.transform,
+                    visualShell.transform);
+
+                Assert.AreSame(interpolationTarget.transform, selected);
+                Assert.AreNotSame(root.transform, selected);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(visualShell);
+                UnityEngine.Object.DestroyImmediate(interpolationAnchor);
+                UnityEngine.Object.DestroyImmediate(interpolationTarget);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void SmoothFollowPosition_SmoothsSmallDeltaButSnapsLargeCorrection()
+        {
+            Vector3 currentPosition = Vector3.zero;
+            Vector3 smallTarget = Vector3.forward;
+
+            Vector3 smoothed = SumoCameraFollow.SmoothFollowPosition(
+                currentPosition,
+                smallTarget,
+                sharpness: 28f,
+                deltaTime: 1f / 60f,
+                snapDistance: 1.5f,
+                hasCurrentPosition: true);
+
+            Assert.Greater(smoothed.z, currentPosition.z);
+            Assert.Less(smoothed.z, smallTarget.z);
+
+            Vector3 largeTarget = Vector3.forward * 2f;
+            Vector3 snapped = SumoCameraFollow.SmoothFollowPosition(
+                currentPosition,
+                largeTarget,
+                sharpness: 28f,
+                deltaTime: 1f / 60f,
+                snapDistance: 1.5f,
+                hasCurrentPosition: true);
+
+            Assert.Less(Vector3.Distance(snapped, largeTarget), 0.0001f);
+        }
+
+        [Test]
+        public void ProxyPresentation_DefaultRemoteMovementUsesDirectPresentationMode()
+        {
+            GameObject proxyObject = new GameObject("proxy");
+
+            try
+            {
+                SumoProxyPresentation presentation = proxyObject.AddComponent<SumoProxyPresentation>();
+                MethodInfo method = typeof(SumoProxyPresentation).GetMethod(
+                    "ShouldUseDirectPresentationMode",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+
+                Assert.IsNotNull(method);
+                bool directMode = (bool)method.Invoke(presentation, new object[] { false, 0f });
+
+                Assert.IsTrue(directMode);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(proxyObject);
+            }
+        }
+
+        [Test]
+        public void ResolvePredictedLocalAttacker_LocalFirstWinsDespiteStaleRemotePressure()
+        {
+            SumoAttackerDecision staleRemoteDecision = new SumoAttackerDecision(
+                SumoAttackerRole.Second,
+                SumoTieResolvedBy.SpeedDelta);
+
+            SumoAttackerDecision resolved = SumoImpactResolver.ResolvePredictedLocalAttacker(
+                isPredicted: true,
+                currentDecision: staleRemoteDecision,
+                localRole: SumoAttackerRole.First,
+                localHasInputAuthority: true,
+                remoteHasInputAuthority: false,
+                localPressure: 0.8f,
+                localIntentPressure: 1.1f,
+                remotePressure: 6f,
+                minLocalPressure: 0.25f,
+                tieSpeedEpsilon: 0.15f);
+
+            Assert.AreEqual(SumoAttackerRole.First, resolved.Role);
+            Assert.AreEqual(SumoTieResolvedBy.SpeedDelta, resolved.TieResolvedBy);
+        }
+
+        [Test]
+        public void ResolvePredictedLocalAttacker_LocalSecondWinsWhenObjectOrderIsReversed()
+        {
+            SumoAttackerDecision staleRemoteDecision = new SumoAttackerDecision(
+                SumoAttackerRole.First,
+                SumoTieResolvedBy.SpeedDelta);
+
+            SumoAttackerDecision resolved = SumoImpactResolver.ResolvePredictedLocalAttacker(
+                isPredicted: true,
+                currentDecision: staleRemoteDecision,
+                localRole: SumoAttackerRole.Second,
+                localHasInputAuthority: true,
+                remoteHasInputAuthority: false,
+                localPressure: 0.8f,
+                localIntentPressure: 1.1f,
+                remotePressure: 6f,
+                minLocalPressure: 0.25f,
+                tieSpeedEpsilon: 0.15f);
+
+            Assert.AreEqual(SumoAttackerRole.Second, resolved.Role);
+            Assert.AreEqual(SumoTieResolvedBy.SpeedDelta, resolved.TieResolvedBy);
+        }
+
+        [Test]
+        public void ResolvePredictedLocalAttacker_RequiresLocalInputAuthorityAndIntent()
+        {
+            SumoAttackerDecision staleRemoteDecision = new SumoAttackerDecision(
+                SumoAttackerRole.Second,
+                SumoTieResolvedBy.SpeedDelta);
+
+            SumoAttackerDecision noAuthority = SumoImpactResolver.ResolvePredictedLocalAttacker(
+                isPredicted: true,
+                currentDecision: staleRemoteDecision,
+                localRole: SumoAttackerRole.First,
+                localHasInputAuthority: false,
+                remoteHasInputAuthority: false,
+                localPressure: 0.8f,
+                localIntentPressure: 1.1f,
+                remotePressure: 6f,
+                minLocalPressure: 0.25f,
+                tieSpeedEpsilon: 0.15f);
+            SumoAttackerDecision noIntent = SumoImpactResolver.ResolvePredictedLocalAttacker(
+                isPredicted: true,
+                currentDecision: staleRemoteDecision,
+                localRole: SumoAttackerRole.First,
+                localHasInputAuthority: true,
+                remoteHasInputAuthority: false,
+                localPressure: 0.1f,
+                localIntentPressure: 0.1f,
+                remotePressure: 6f,
+                minLocalPressure: 0.25f,
+                tieSpeedEpsilon: 0.15f);
+
+            Assert.AreEqual(SumoAttackerRole.Second, noAuthority.Role);
+            Assert.AreEqual(SumoAttackerRole.Second, noIntent.Role);
+        }
+
+        [Test]
+        public void ShouldApplyPredictedAttackerRecoil_AllowsOnlyLocalInputAttacker()
+        {
+            Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedAttackerRecoil(
+                isPredicted: true,
+                attackerHasInputAuthority: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldApplyPredictedAttackerRecoil(
+                isPredicted: true,
+                attackerHasInputAuthority: false));
+            Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedAttackerRecoil(
+                isPredicted: false,
+                attackerHasInputAuthority: false));
         }
 
         [Test]
