@@ -252,9 +252,10 @@ namespace Sumo
         private const float FallbackMinRamPressureSpeed = 1.6f;
         private const float FallbackRamStopEnergyThreshold = 0.08f;
         private const float FallbackImpactVerticalLift = 0.02f;
-        private const float FallbackImpactBurstDuration = 0.18f;
-        private const float FallbackFirstImpactBurstFrontload = 0.42f;
-        private const float FallbackFirstImpactKickShare = 0.24f;
+        private const float FallbackImpactBurstDuration = 0.08f;
+        private const float FallbackFirstImpactBurstFrontload = 0.75f;
+        private const float FallbackFirstImpactKickShare = 0.70f;
+        private const float FallbackFirstImpactKickCapMultiplier = 3f;
         private const float FallbackSoftShoveMaxDeltaVPerTick = 0.12f;
         private const float FallbackSoftShoveEntryMaxDeltaVPerTick = 0.13f;
         private const float FallbackArcadeBurstMaxDeltaVPerTick = 0.48f;
@@ -286,10 +287,11 @@ namespace Sumo
         private const float PredictedActiveCombatPenetrationResolveMaxSpeed = 1.25f;
         private const float PredictedActiveCombatPenetrationDeadZone = 0.018f;
         private const int ActiveCombatVictimImpactResponseTicks = 3;
-        private const float ActiveCombatVictimImpactAuthorityResponseShare = 0.34f;
-        private const float ActiveCombatVictimImpactPredictedResponseShare = 0.14f;
+        private const float ActiveCombatVictimImpactAuthorityResponseShare = 0.52f;
+        private const float ActiveCombatVictimImpactPredictedResponseShare = 0.34f;
         private const float ActiveCombatVictimRamAuthorityResponseShare = 0.08f;
         private const float ActiveCombatVictimRamPredictedResponseShare = 0.02f;
+        private const float RamContactPressureMinClosingSpeed = 0.12f;
         private const float ActiveCombatPenetrationSlopBonus = 0.012f;
         private const int PredictedRollbackHistoryTicks = 192;
         private const float LowTierRamSeedEnergyPadding = 0.01f;
@@ -2817,6 +2819,7 @@ namespace Sumo
                 attackerVelocity = attacker._rigidbody.linearVelocity;
                 victimVelocity = victim._rigidbody.linearVelocity;
                 attackerForwardSpeed = GetApproachSpeed(attacker, attackerVelocity, liveDirection);
+                liveClosingSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, liveDirection));
             }
 
             attackerForwardSpeed = SanitizeNonNegativeFinite(attackerForwardSpeed);
@@ -2826,7 +2829,13 @@ namespace Sumo
 
             float minPressureSpeed = GetPairMinRamPressureSpeed(attacker, victim);
             float minDirectionDot = GetPairRamMinDirectionDot(attacker, victim);
-            bool isPressing = attackerForwardSpeed >= minPressureSpeed && directionDot >= minDirectionDot;
+            bool isPressing = SumoImpactResolver.ShouldApplyRamContactDrive(
+                attackerForwardSpeed,
+                directionDot,
+                liveClosingSpeed,
+                minPressureSpeed,
+                minDirectionDot,
+                RamContactPressureMinClosingSpeed);
 
             SumoRamTickResult ramTick = SumoImpactResolver.ComputeRamTick(
                 attacker.physicsConfig,
@@ -2896,7 +2905,7 @@ namespace Sumo
 
                 PublishRamDrive(attacker, Mathf.Max(energy01, 0.15f));
 
-                if (cappedVictimAcceleration > 0.0001f || victimSpeedGap > 0.01f)
+                if (cappedVictimAcceleration > 0.0001f)
                 {
                     PublishVictimPush(
                         victim,
@@ -3421,6 +3430,19 @@ namespace Sumo
 
             float appliedVictimImpulse = cappedVictimDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
             float victimImpactTargetSpeed = victimForwardBeforeImpact + cappedVictimDeltaV;
+            float attackerRecoilDeltaV = impactResult.AttackerRecoilImpulse / Mathf.Max(0.01f, attacker._rigidbody.mass);
+            Vector3 attackerRecoilDirection = -cappedPushDirection;
+            if (attackerRecoilDirection.sqrMagnitude < 0.0001f)
+            {
+                attackerRecoilDirection = -GetHorizontalDirection(attackerToVictim);
+            }
+
+            if (attackerRecoilDirection.sqrMagnitude < 0.0001f)
+            {
+                attackerRecoilDirection = -impulseDirection.normalized;
+            }
+
+            float attackerRecoilForwardBeforeImpact = Vector3.Dot(attackerVelocity, attackerRecoilDirection);
 
             pairState.State = SumoPairState.InitialImpact;
             pairState.AttackerController = attacker;
@@ -3439,7 +3461,9 @@ namespace Sumo
             pairState.ImpactRamUnlockTick = currentTick + InitialImpactRamGateTicks;
             pairState.ImpactBurstGraceUntilTick = currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration);
             pairState.InitialVictimDeltaV = cappedVictimDeltaV;
-            pairState.InitialAttackerDeltaV = impactResult.AttackerRecoilImpulse / Mathf.Max(0.01f, attacker._rigidbody.mass);
+            pairState.InitialAttackerDeltaV = attackerRecoilDeltaV;
+            pairState.InitialVictimTargetSpeed = victimImpactTargetSpeed;
+            pairState.InitialAttackerTargetSpeed = attackerRecoilForwardBeforeImpact + attackerRecoilDeltaV;
             pairState.ShoveForceMultiplier = shoveForceMultiplier;
             pairState.RamContactBlend = 0f;
             pairState.InitialRamEnergy = impactResult.OpensRamState ? impactResult.InitialRamEnergy : 0f;
@@ -3632,6 +3656,8 @@ namespace Sumo
             pairState.ImpactBurstGraceUntilTick = 0;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
+            pairState.InitialVictimTargetSpeed = 0f;
+            pairState.InitialAttackerTargetSpeed = 0f;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
             pairState.InitialImpulse = 0f;
             pairState.InitialImpactSpeed = Mathf.Max(pairState.InitialImpactSpeed, attackerForwardSpeed);
@@ -3770,6 +3796,8 @@ namespace Sumo
             pairState.ImpactBurstGraceUntilTick = 0;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
+            pairState.InitialVictimTargetSpeed = 0f;
+            pairState.InitialAttackerTargetSpeed = 0f;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
             pairState.VictimIncomingPushMultiplierOverride = 0f;
             pairState.ContactDirection = direction;
@@ -3910,6 +3938,8 @@ namespace Sumo
             {
                 pairState.InitialVictimDeltaV = 0f;
                 pairState.InitialAttackerDeltaV = 0f;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
                 return;
             }
 
@@ -3934,10 +3964,8 @@ namespace Sumo
             float speed01 = attacker.physicsConfig != null
                 ? attacker.physicsConfig.EvaluateImpactSpeed01(pairState.InitialImpactSpeed)
                 : Mathf.Clamp01(pairState.InitialImpactSpeed / Mathf.Max(0.01f, FallbackAttackerReferenceTopSpeed));
-            float speedSmooth = speed01 * speed01 * (3f - 2f * speed01);
-
-            float speedScaledShare = Mathf.Clamp01(configuredShare * Mathf.Lerp(0.82f, 1f, speedSmooth));
-            if (speedScaledShare <= 0.0001f)
+            float kickoffShare = SumoImpactResolver.ComputeFirstImpactKickoffShare(configuredShare, speed01);
+            if (kickoffShare <= 0.0001f)
             {
                 return;
             }
@@ -3958,12 +3986,14 @@ namespace Sumo
             pairState.ContactDirection = direction;
             float shoveForceMultiplier = GetStateShoveForceMultiplier(pairState);
 
-            float victimKickDeltaV = SumoImpactResolver.ClampImpactDeltaVStep(
-                pairState.InitialVictimDeltaV * speedScaledShare,
-                GetScaledArcadeBurstMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier));
-            float attackerKickDeltaV = SumoImpactResolver.ClampImpactDeltaVStep(
-                pairState.InitialAttackerDeltaV * speedScaledShare,
-                GetScaledAttackerRecoilMaxDeltaVPerTick(shoveForceMultiplier));
+            float victimKickDeltaV = SumoImpactResolver.ComputeFirstImpactKickoffDeltaV(
+                pairState.InitialVictimDeltaV,
+                kickoffShare,
+                GetScaledFirstImpactKickoffMaxDeltaV(attacker, victim, shoveForceMultiplier));
+            float attackerKickDeltaV = SumoImpactResolver.ComputeFirstImpactKickoffDeltaV(
+                pairState.InitialAttackerDeltaV,
+                kickoffShare,
+                GetScaledAttackerRecoilKickoffMaxDeltaV(attacker, victim, shoveForceMultiplier));
 
             if (victimKickDeltaV > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode, true))
             {
@@ -3994,6 +4024,8 @@ namespace Sumo
             {
                 pairState.InitialVictimDeltaV = 0f;
                 pairState.InitialAttackerDeltaV = 0f;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
                 pairState.InitialImpactElapsed = pairState.InitialImpactDuration;
                 return true;
             }
@@ -4001,6 +4033,8 @@ namespace Sumo
             if (pairState.InitialVictimDeltaV <= 0.0001f && pairState.InitialAttackerDeltaV <= 0.0001f)
             {
                 pairState.InitialImpactElapsed = pairState.InitialImpactDuration;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
                 return true;
             }
 
@@ -4009,6 +4043,8 @@ namespace Sumo
             {
                 pairState.InitialVictimDeltaV = 0f;
                 pairState.InitialAttackerDeltaV = 0f;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
                 return true;
             }
 
@@ -4017,6 +4053,8 @@ namespace Sumo
                 pairState.InitialImpactElapsed = duration;
                 pairState.InitialVictimDeltaV = 0f;
                 pairState.InitialAttackerDeltaV = 0f;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
                 return true;
             }
 
@@ -4057,27 +4095,52 @@ namespace Sumo
             }
 
             pairState.ContactDirection = direction;
+            Vector3 speedDirection = GetHorizontalDirection(direction);
+            if (speedDirection.sqrMagnitude < 0.0001f)
+            {
+                speedDirection = direction.normalized;
+            }
+
             float shoveForceMultiplier = GetStateShoveForceMultiplier(pairState);
 
-            float victimDeltaVStep = SumoImpactResolver.ClampImpactDeltaVStep(
-                pairState.InitialVictimDeltaV * segmentWeight,
+            float victimForwardSpeed = Vector3.Dot(victim._rigidbody.linearVelocity, speedDirection);
+            float victimTargetSpeed = pairState.InitialVictimTargetSpeed > 0.0001f
+                ? pairState.InitialVictimTargetSpeed
+                : victimForwardSpeed + pairState.InitialVictimDeltaV;
+            float victimDeltaVStep = SumoImpactResolver.ComputeResidualImpactDeltaV(
+                pairState.InitialVictimDeltaV,
+                victimTargetSpeed,
+                victimForwardSpeed,
+                segmentWeight,
                 GetScaledArcadeBurstMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier));
-            float attackerDeltaVStep = SumoImpactResolver.ClampImpactDeltaVStep(
-                pairState.InitialAttackerDeltaV * segmentWeight,
+
+            Vector3 attackerRecoilDirection = -speedDirection;
+            float attackerRecoilSpeed = Vector3.Dot(attacker._rigidbody.linearVelocity, attackerRecoilDirection);
+            float attackerTargetSpeed = pairState.InitialAttackerTargetSpeed;
+            if (Mathf.Abs(attackerTargetSpeed) <= 0.0001f)
+            {
+                attackerTargetSpeed = attackerRecoilSpeed + pairState.InitialAttackerDeltaV;
+            }
+
+            float attackerDeltaVStep = SumoImpactResolver.ComputeResidualImpactDeltaV(
+                pairState.InitialAttackerDeltaV,
+                attackerTargetSpeed,
+                attackerRecoilSpeed,
+                segmentWeight,
                 GetScaledAttackerRecoilMaxDeltaVPerTick(shoveForceMultiplier));
 
             if (victimDeltaVStep > 0.0001f && ShouldApplyPredictedVictimPush(attacker, victim, mode, hasContact))
             {
                 ApplyVelocityDelta(
                     victim,
-                    direction * victimDeltaVStep,
+                    speedDirection * victimDeltaVStep,
                     mode,
                     GetStateVictimIncomingPushMultiplierOverride(pairState));
             }
 
             if (attackerDeltaVStep > 0.0001f && ShouldApplyPredictedAttackerRecoil(attacker, mode))
             {
-                ApplyVelocityDelta(attacker, -direction * attackerDeltaVStep, mode);
+                ApplyVelocityDelta(attacker, attackerRecoilDirection * attackerDeltaVStep, mode);
             }
 
             pairState.InitialVictimDeltaV = Mathf.Max(0f, pairState.InitialVictimDeltaV - victimDeltaVStep);
@@ -4089,6 +4152,8 @@ namespace Sumo
             {
                 pairState.InitialVictimDeltaV = 0f;
                 pairState.InitialAttackerDeltaV = 0f;
+                pairState.InitialVictimTargetSpeed = 0f;
+                pairState.InitialAttackerTargetSpeed = 0f;
             }
 
             return burstComplete;
@@ -4278,6 +4343,8 @@ namespace Sumo
             pairState.ImpactBurstGraceUntilTick = 0;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
+            pairState.InitialVictimTargetSpeed = 0f;
+            pairState.InitialAttackerTargetSpeed = 0f;
             pairState.ShoveForceMultiplier = 1f;
             pairState.VictimIncomingPushMultiplierOverride = 0f;
             pairState.RamContactBlend = 0f;
@@ -4446,6 +4513,8 @@ namespace Sumo
                 InitialImpactElapsed = 0f,
                 InitialVictimDeltaV = 0f,
                 InitialAttackerDeltaV = 0f,
+                InitialVictimTargetSpeed = 0f,
+                InitialAttackerTargetSpeed = 0f,
                 ShoveForceMultiplier = 1f,
                 VictimIncomingPushMultiplierOverride = 0f,
                 RamContactBlend = 0f,
@@ -4913,7 +4982,7 @@ namespace Sumo
         {
             float fromA = a != null && a.physicsConfig != null ? a.physicsConfig.ImpactBurstDuration : FallbackImpactBurstDuration;
             float fromB = b != null && b.physicsConfig != null ? b.physicsConfig.ImpactBurstDuration : FallbackImpactBurstDuration;
-            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.04f, 0.24f);
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.04f, 0.12f);
         }
 
         private static float ResolveAppliedShoveForceMultiplier(float multiplier)
@@ -4965,6 +5034,16 @@ namespace Sumo
             return GetPairArcadeBurstMaxDeltaVPerTick(a, b) * ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
         }
 
+        private static float GetScaledFirstImpactKickoffMaxDeltaV(
+            SumoCollisionController a,
+            SumoCollisionController b,
+            float shoveForceMultiplier)
+        {
+            return GetPairArcadeBurstMaxDeltaVPerTick(a, b)
+                * ResolveAppliedShoveForceMultiplier(shoveForceMultiplier)
+                * GetPairFirstImpactKickCapMultiplier(a, b);
+        }
+
         private static float GetScaledSoftShoveMaxDeltaVPerTick(
             SumoCollisionController a,
             SumoCollisionController b,
@@ -4988,6 +5067,15 @@ namespace Sumo
                 ArcadeBurstAttackerRecoilMaxDeltaVPerTick * ResolveAppliedShoveForceMultiplier(shoveForceMultiplier));
         }
 
+        private static float GetScaledAttackerRecoilKickoffMaxDeltaV(
+            SumoCollisionController a,
+            SumoCollisionController b,
+            float shoveForceMultiplier)
+        {
+            return GetScaledAttackerRecoilMaxDeltaVPerTick(shoveForceMultiplier)
+                * GetPairFirstImpactKickCapMultiplier(a, b);
+        }
+
         private static float GetPairArcadeBurstMaxDeltaVPerTick(SumoCollisionController a, SumoCollisionController b)
         {
             float fromA = a != null && a.physicsConfig != null
@@ -4997,6 +5085,17 @@ namespace Sumo
                 ? b.physicsConfig.ArcadeBurstMaxDeltaVPerTick
                 : FallbackArcadeBurstMaxDeltaVPerTick;
             return Mathf.Clamp(Mathf.Max(fromA, fromB), 0.005f, 0.55f);
+        }
+
+        private static float GetPairFirstImpactKickCapMultiplier(SumoCollisionController a, SumoCollisionController b)
+        {
+            float fromA = a != null && a.physicsConfig != null
+                ? a.physicsConfig.FirstImpactKickCapMultiplier
+                : FallbackFirstImpactKickCapMultiplier;
+            float fromB = b != null && b.physicsConfig != null
+                ? b.physicsConfig.FirstImpactKickCapMultiplier
+                : FallbackFirstImpactKickCapMultiplier;
+            return Mathf.Clamp(Mathf.Max(fromA, fromB), 1f, 5f);
         }
 
         private static float GetPairSoftShoveMaxDeltaVPerTick(SumoCollisionController a, SumoCollisionController b)

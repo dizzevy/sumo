@@ -331,6 +331,64 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ComputeFirstImpactKickoffDeltaV_UsesLargeContactKickBeforeTail()
+        {
+            float kickoffShare = SumoImpactResolver.ComputeFirstImpactKickoffShare(
+                configuredShare: 0.70f,
+                speed01: 0.5f);
+            float kickoffDeltaV = SumoImpactResolver.ComputeFirstImpactKickoffDeltaV(
+                remainingDeltaV: 3f,
+                kickoffShare01: kickoffShare,
+                maxKickDeltaV: 1.44f);
+
+            Assert.GreaterOrEqual(kickoffShare, 0.65f);
+            Assert.LessOrEqual(kickoffShare, 0.70f);
+            Assert.AreEqual(1.44f, kickoffDeltaV, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeResidualImpactDeltaV_DoesNotOvershootTargetSpeed()
+        {
+            Assert.AreEqual(
+                0f,
+                SumoImpactResolver.ComputeResidualImpactDeltaV(
+                    remainingDeltaV: 1f,
+                    targetForwardSpeed: 4f,
+                    currentForwardSpeed: 4f,
+                    segmentWeight: 1f,
+                    maxDeltaVPerTick: 1f),
+                0.0001f);
+            Assert.AreEqual(
+                0.2f,
+                SumoImpactResolver.ComputeResidualImpactDeltaV(
+                    remainingDeltaV: 1f,
+                    targetForwardSpeed: 4f,
+                    currentForwardSpeed: 3.8f,
+                    segmentWeight: 1f,
+                    maxDeltaVPerTick: 1f),
+                0.0001f);
+        }
+
+        [Test]
+        public void ShouldApplyRamContactDrive_RequiresPhysicalClosingPressure()
+        {
+            Assert.IsTrue(SumoImpactResolver.ShouldApplyRamContactDrive(
+                attackerForwardSpeed: 3f,
+                directionDot: 0.8f,
+                physicalClosingSpeed: 0.2f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+            Assert.IsFalse(SumoImpactResolver.ShouldApplyRamContactDrive(
+                attackerForwardSpeed: 3f,
+                directionDot: 0.8f,
+                physicalClosingSpeed: 0f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+        }
+
+        [Test]
         public void ShouldApplyPredictedVictimPush_RequiresContactAndAttackerOwnedRemoteProxy()
         {
             Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedVictimPush(

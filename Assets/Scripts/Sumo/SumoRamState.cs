@@ -58,6 +58,8 @@ namespace Sumo
         public float InitialImpactElapsed;
         public float InitialVictimDeltaV;
         public float InitialAttackerDeltaV;
+        public float InitialVictimTargetSpeed;
+        public float InitialAttackerTargetSpeed;
         public float ShoveForceMultiplier;
         public float VictimIncomingPushMultiplierOverride;
         public float RamContactBlend;

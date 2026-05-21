@@ -56,9 +56,10 @@ namespace Sumo
         [SerializeField] private float impactVerticalLift = 0.02f;
         [FormerlySerializedAs("dashImpactMultiplier")]
         [SerializeField] private float dashImpactMultiplier = 1.85f;
-        [SerializeField] private float impactBurstDuration = 0.18f;
-        [SerializeField] private float firstImpactBurstFrontload = 0.42f;
-        [SerializeField] private float firstImpactKickImpulseShare = 0.24f;
+        [SerializeField] private float impactBurstDuration = 0.08f;
+        [SerializeField] private float firstImpactBurstFrontload = 0.75f;
+        [SerializeField] private float firstImpactKickImpulseShare = 0.70f;
+        [SerializeField] private float firstImpactKickCapMultiplier = 3f;
 
         [Header("Hybrid Contact Response")]
         [SerializeField] private float arcadeBurstMinSpeed01 = 0.5f;
@@ -187,6 +188,7 @@ namespace Sumo
         public float ImpactBurstDuration => impactBurstDuration;
         public float FirstImpactBurstFrontload => firstImpactBurstFrontload;
         public float FirstImpactKickImpulseShare => firstImpactKickImpulseShare;
+        public float FirstImpactKickCapMultiplier => firstImpactKickCapMultiplier;
         public float ArcadeBurstMinSpeed01 => arcadeBurstMinSpeed01;
         public float ArcadeBurstDashMinSpeed01 => arcadeBurstDashMinSpeed01;
         public float SoftShoveMaxDeltaVPerTick => softShoveMaxDeltaVPerTick;
@@ -331,9 +333,10 @@ namespace Sumo
             impactAttackerRecoilScale = Mathf.Clamp01(impactAttackerRecoilScale);
             impactVerticalLift = Mathf.Max(0f, impactVerticalLift);
             dashImpactMultiplier = Mathf.Max(1f, dashImpactMultiplier);
-            impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.24f);
+            impactBurstDuration = Mathf.Clamp(impactBurstDuration, 0.04f, 0.12f);
             firstImpactBurstFrontload = Mathf.Clamp01(firstImpactBurstFrontload);
             firstImpactKickImpulseShare = Mathf.Clamp01(firstImpactKickImpulseShare);
+            firstImpactKickCapMultiplier = Mathf.Clamp(firstImpactKickCapMultiplier, 1f, 5f);
             arcadeBurstMinSpeed01 = Mathf.Clamp01(arcadeBurstMinSpeed01);
             arcadeBurstDashMinSpeed01 = Mathf.Clamp01(arcadeBurstDashMinSpeed01);
             softShoveMaxDeltaVPerTick = Mathf.Clamp(softShoveMaxDeltaVPerTick, 0.005f, 0.2f);

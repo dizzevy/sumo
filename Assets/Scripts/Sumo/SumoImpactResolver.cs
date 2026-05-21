@@ -322,6 +322,49 @@ namespace Sumo
                 Mathf.Max(0f, SanitizeFinite(maxDeltaVPerTick)));
         }
 
+        public static float ComputeFirstImpactKickoffShare(float configuredShare, float speed01)
+        {
+            float share = Mathf.Clamp01(SanitizeFinite(configuredShare));
+            float speed = Mathf.Clamp01(SanitizeFinite(speed01));
+            float speedSmooth = speed * speed * (3f - 2f * speed);
+            return Mathf.Clamp01(share * Mathf.Lerp(0.94f, 1f, speedSmooth));
+        }
+
+        public static float ComputeFirstImpactKickoffDeltaV(float remainingDeltaV, float kickoffShare01, float maxKickDeltaV)
+        {
+            float requestedDeltaV = SanitizeNonNegativeFinite(remainingDeltaV) * Mathf.Clamp01(SanitizeFinite(kickoffShare01));
+            return ClampImpactDeltaVStep(requestedDeltaV, maxKickDeltaV);
+        }
+
+        public static float ComputeResidualImpactDeltaV(
+            float remainingDeltaV,
+            float targetForwardSpeed,
+            float currentForwardSpeed,
+            float segmentWeight,
+            float maxDeltaVPerTick)
+        {
+            float remainingBudget = SanitizeNonNegativeFinite(remainingDeltaV);
+            float remainingToTarget = Mathf.Max(
+                0f,
+                SanitizeFinite(targetForwardSpeed) - SanitizeFinite(currentForwardSpeed));
+            float effectiveRemaining = Mathf.Min(remainingBudget, remainingToTarget);
+            float requestedDeltaV = effectiveRemaining * Mathf.Clamp01(SanitizeFinite(segmentWeight));
+            return ClampImpactDeltaVStep(requestedDeltaV, maxDeltaVPerTick);
+        }
+
+        public static bool ShouldApplyRamContactDrive(
+            float attackerForwardSpeed,
+            float directionDot,
+            float physicalClosingSpeed,
+            float minPressureSpeed,
+            float minDirectionDot,
+            float minClosingSpeed)
+        {
+            return SanitizeNonNegativeFinite(attackerForwardSpeed) >= Mathf.Max(0f, SanitizeFinite(minPressureSpeed))
+                && Mathf.Clamp01(SanitizeFinite(directionDot)) >= Mathf.Clamp01(SanitizeFinite(minDirectionDot))
+                && SanitizeNonNegativeFinite(physicalClosingSpeed) >= Mathf.Max(0f, SanitizeFinite(minClosingSpeed));
+        }
+
         public static bool ShouldUseFirstImpactVisualLaunch(SumoImpactResponseMode responseMode)
         {
             return responseMode == SumoImpactResponseMode.ArcadeBurst;

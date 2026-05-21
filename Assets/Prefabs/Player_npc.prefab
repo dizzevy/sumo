@@ -333,9 +333,10 @@ MonoBehaviour:
   impactAttackerRecoilScale: 0.2
   impactVerticalLift: 0.02
   dashImpactMultiplier: 1.6
-  impactBurstDuration: 0.18
-  firstImpactBurstFrontload: 0.42
-  firstImpactKickImpulseShare: 0.24
+  impactBurstDuration: 0.08
+  firstImpactBurstFrontload: 0.75
+  firstImpactKickImpulseShare: 0.7
+  firstImpactKickCapMultiplier: 3
   arcadeBurstMinSpeed01: 0.5
   arcadeBurstDashMinSpeed01: 0.25
   softShoveMaxDeltaVPerTick: 0.12
