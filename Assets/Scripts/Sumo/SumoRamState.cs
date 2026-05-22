@@ -8,7 +8,8 @@ namespace Sumo
         InitialImpact = 1,
         Ramming = 2,
         RamDepleted = 3,
-        ReengageReady = 4
+        ReengageReady = 4,
+        ContactEngagement = 5
     }
 
     public enum SumoTieResolvedBy : byte
@@ -41,12 +42,22 @@ namespace Sumo
         public int ImpactLatchTick;
         public int ImpactRamUnlockTick;
         public int ImpactBurstGraceUntilTick;
+        public int EngagementStartTick;
+        public int LastEngagementImpulseTick;
+        public int EntryNudgeAppliedTick;
+        public int ImpactTailExhaustedTick;
+        public int SilentTailDrainTicks;
+        public int SustainedPressureTicks;
+        public int HardBreakStartTick;
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
         public bool ReimpactSuppressedUntilHardBreak;
+        public bool RamStartedFromSustainedPressure;
+        public bool ImpactTailExhausted;
         public SumoPairState State;
         public SumoTieResolvedBy TieResolvedBy;
         public SumoImpactResponseMode ImpactResponseMode;
+        public SumoImpactTier EngagementTier;
         public int LastTierAttackerRef;
         public SumoImpactTier LastResolvedImpactTier;
         public float EnterFirstApproachSpeed;
@@ -60,6 +71,15 @@ namespace Sumo
         public float InitialAttackerDeltaV;
         public float InitialVictimTargetSpeed;
         public float InitialAttackerTargetSpeed;
+        public float EngagementEntrySpeed;
+        public float EntryImpactDeltaV;
+        public float EngagementInitialBudget;
+        public float EngagementRemainingBudget;
+        public float LastEngagementImpulseDeltaV;
+        public float LastResidualImpulseDeltaV;
+        public float EngagementTailSpeed;
+        public float EngagementResidualAccumulator;
+        public float SustainedPressurePeakSpeed;
         public float ShoveForceMultiplier;
         public float VictimIncomingPushMultiplierOverride;
         public float RamContactBlend;
@@ -70,6 +90,7 @@ namespace Sumo
         public Vector3 ContactPoint;
         public Vector3 ContactNormal;
         public Vector3 ContactDirection;
+        public Vector3 StableEngagementDirection;
         public SumoCollisionController FirstController;
         public SumoCollisionController SecondController;
         public SumoCollisionController AttackerController;

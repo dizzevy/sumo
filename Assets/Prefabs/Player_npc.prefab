@@ -416,7 +416,7 @@ MonoBehaviour:
   canvasRoot: {fileID: 0}
   speedText: {fileID: 0}
   autoCreateCanvas: 1
-  anchoredPosition: {x: 0, y: 58}
+  anchoredPosition: {x: 0, y: 150}
   fontSize: 42
   textColor: {r: 1, g: 1, b: 1, a: 1}
   padWithLeadingZeros: 0

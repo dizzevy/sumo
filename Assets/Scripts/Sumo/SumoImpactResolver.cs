@@ -244,6 +244,299 @@ namespace Sumo
             return Mathf.Min(physicalSpeed, Mathf.Max(0.01f, maxImpactSpeed));
         }
 
+        public static float ComputeCappedRamDriveSpeed(float physicalForwardSpeed, float engagementEntrySpeed)
+        {
+            float physicalSpeed = SanitizeNonNegativeFinite(physicalForwardSpeed);
+            float entrySpeed = SanitizeNonNegativeFinite(engagementEntrySpeed);
+            return entrySpeed > 0.0001f
+                ? Mathf.Min(physicalSpeed, entrySpeed)
+                : physicalSpeed;
+        }
+
+        public static float ResolveMonotonicRamEnergy(
+            float requestedRamEnergy,
+            float currentRamEnergy,
+            bool continuousEngagement)
+        {
+            float requested = SanitizeNonNegativeFinite(requestedRamEnergy);
+            if (!continuousEngagement)
+            {
+                return requested;
+            }
+
+            return Mathf.Min(requested, SanitizeNonNegativeFinite(currentRamEnergy));
+        }
+
+        public static bool IsHardBreakQualified(
+            int currentTick,
+            int qualifiedBreakStartTick,
+            int requiredBreakTicks,
+            float maxSeparationSinceBreak,
+            float requiredSeparation)
+        {
+            return qualifiedBreakStartTick > 0
+                && currentTick - qualifiedBreakStartTick >= Mathf.Max(1, requiredBreakTicks)
+                && SanitizeNonNegativeFinite(maxSeparationSinceBreak) >= Mathf.Max(0f, SanitizeFinite(requiredSeparation));
+        }
+
+        public static float ComputeExhaustedContactStabilizationDeltaV(float closingSpeed, float maxDeltaV)
+        {
+            return Mathf.Min(
+                SanitizeNonNegativeFinite(closingSpeed),
+                Mathf.Max(0f, SanitizeFinite(maxDeltaV)));
+        }
+
+        public static float ComputeResidualMeaningfulDeltaV(float maxDeltaVPerTick, SumoImpactResponseMode responseMode)
+        {
+            float maxStep = SanitizeNonNegativeFinite(maxDeltaVPerTick);
+            if (maxStep <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            if (responseMode == SumoImpactResponseMode.ArcadeBurst)
+            {
+                return Mathf.Clamp(maxStep * 0.06f, 0.045f, 0.16f);
+            }
+
+            return Mathf.Clamp(maxStep * 0.14f, 0.025f, 0.07f);
+        }
+
+        public static float ComputeDynamicResidualImpulseDeltaV(
+            float tailSpeed,
+            float physicalClosingSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale,
+            float remainingBudget,
+            float initialBudget,
+            float previousDeltaV,
+            float maxDeltaVPerTick,
+            SumoImpactResponseMode responseMode)
+        {
+            float tail = SanitizeNonNegativeFinite(tailSpeed);
+            float closing = SanitizeNonNegativeFinite(physicalClosingSpeed);
+            float pressureSpeed = Mathf.Max(tail, closing * 0.55f);
+            if (pressureSpeed <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float responseFactor = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.18f : 0.095f;
+            float requested = Mathf.Min(
+                SanitizeNonNegativeFinite(maxDeltaVPerTick),
+                pressureSpeed * responseFactor);
+            requested = Mathf.Min(
+                requested,
+                ComputeCappedPushDeltaV(tail, victimForwardSpeed, targetSpeedScale));
+
+            return ComputeDiminishingResidualDeltaV(
+                requested,
+                remainingBudget,
+                initialBudget,
+                previousDeltaV,
+                responseMode);
+        }
+
+        public static float ComputeEntryToTailResidualCap(float entryDeltaV, SumoImpactResponseMode responseMode)
+        {
+            float entry = SanitizeNonNegativeFinite(entryDeltaV);
+            if (entry <= 0.0001f)
+            {
+                return float.PositiveInfinity;
+            }
+
+            float share = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.82f : 0.72f;
+            return entry * share;
+        }
+
+        public static float ComputeImpactTailResidualDeltaV(
+            float tailSpeed,
+            float physicalClosingSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale,
+            float remainingBudget,
+            float initialBudget,
+            float lastResidualDeltaV,
+            float entryImpactDeltaV,
+            float residualAccumulator,
+            float maxDeltaVPerTick,
+            SumoImpactResponseMode responseMode)
+        {
+            float tail = SanitizeNonNegativeFinite(tailSpeed);
+            float closing = SanitizeNonNegativeFinite(physicalClosingSpeed);
+            float pressureSpeed = Mathf.Max(tail, closing * 0.55f);
+            if (pressureSpeed <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float responseFactor = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.18f : 0.095f;
+            float requested = Mathf.Min(
+                SanitizeNonNegativeFinite(maxDeltaVPerTick),
+                pressureSpeed * responseFactor);
+            requested = Mathf.Min(
+                requested,
+                ComputeCappedPushDeltaV(tail, victimForwardSpeed, targetSpeedScale));
+
+            float previousResidual = SanitizeNonNegativeFinite(lastResidualDeltaV);
+            float firstResidualCap = float.PositiveInfinity;
+            if (previousResidual <= 0.0001f)
+            {
+                firstResidualCap = ComputeEntryToTailResidualCap(entryImpactDeltaV, responseMode);
+                requested = Mathf.Min(requested, firstResidualCap);
+            }
+
+            requested += SanitizeNonNegativeFinite(residualAccumulator);
+            if (previousResidual <= 0.0001f)
+            {
+                requested = Mathf.Min(requested, firstResidualCap);
+            }
+
+            return ComputeDiminishingResidualDeltaV(
+                requested,
+                remainingBudget,
+                initialBudget,
+                previousResidual,
+                responseMode);
+        }
+
+        public static bool IsResidualImpactTailExhausted(
+            float residualDeltaV,
+            float tailSpeed,
+            float remainingBudget,
+            float meaningfulDeltaV)
+        {
+            float meaningful = Mathf.Max(0.0001f, SanitizeNonNegativeFinite(meaningfulDeltaV));
+            return SanitizeNonNegativeFinite(residualDeltaV) < meaningful
+                || SanitizeNonNegativeFinite(tailSpeed) <= meaningful * 1.25f
+                || SanitizeNonNegativeFinite(remainingBudget) <= meaningful * 0.5f;
+        }
+
+        public static bool IsImpactTailFullyExhausted(
+            float residualDeltaV,
+            float tailSpeed,
+            float remainingBudget,
+            float meaningfulDeltaV,
+            int silentDrainTicks)
+        {
+            float meaningful = Mathf.Max(0.0001f, SanitizeNonNegativeFinite(meaningfulDeltaV));
+            float residual = SanitizeNonNegativeFinite(residualDeltaV);
+            float tail = SanitizeNonNegativeFinite(tailSpeed);
+            float remaining = SanitizeNonNegativeFinite(remainingBudget);
+            int drains = Mathf.Max(0, silentDrainTicks);
+
+            return residual < meaningful
+                && tail <= meaningful * 3.0f
+                && remaining <= meaningful * 2.0f
+                && drains >= 1;
+        }
+
+        public static bool CanStartRamAfterImpactTailHandoff(
+            bool impactTailExhausted,
+            int currentTick,
+            int impactTailExhaustedTick,
+            float ramEnergy,
+            float stopThreshold,
+            float physicalForwardSpeed,
+            float directionDot,
+            float physicalClosingSpeed,
+            float minPressureSpeed,
+            float minDirectionDot,
+            float minClosingSpeed)
+        {
+            return impactTailExhausted
+                && impactTailExhaustedTick > 0
+                && currentTick > impactTailExhaustedTick
+                && ShouldStartRamAfterImpactTail(
+                    true,
+                    ramEnergy,
+                    stopThreshold,
+                    physicalForwardSpeed,
+                    directionDot,
+                    physicalClosingSpeed,
+                    minPressureSpeed,
+                    minDirectionDot,
+                    minClosingSpeed);
+        }
+
+        public static float ComputeResidualAttackerSpeedLoss(
+            float victimDeltaV,
+            float directionDot,
+            float shoveForceMultiplier,
+            SumoImpactResponseMode responseMode)
+        {
+            float deltaV = SanitizeNonNegativeFinite(victimDeltaV);
+            if (deltaV <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float angle01 = Mathf.Clamp01(SanitizeFinite(directionDot));
+            float force01 = Mathf.Clamp01((ResolveShoveForceMultiplier(shoveForceMultiplier) - 1f)
+                / (DefaultMaxShoveForceMultiplier - 1f));
+            float baseLoss = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.32f : 0.46f;
+            float angleLoss = Mathf.Lerp(0.72f, 1f, angle01);
+            float forceLoss = Mathf.Lerp(0.9f, 1.12f, force01);
+            return deltaV * baseLoss * angleLoss * forceLoss;
+        }
+
+        public static float ComputeNextImpactTailSpeed(
+            float currentTailSpeed,
+            float attackerSpeedLoss,
+            float unappliedResidualDeltaV,
+            float deltaTime)
+        {
+            float tail = SanitizeNonNegativeFinite(currentTailSpeed);
+            float appliedLoss = SanitizeNonNegativeFinite(attackerSpeedLoss);
+            float suppressedLoss = SanitizeNonNegativeFinite(unappliedResidualDeltaV) * 0.55f;
+            float passiveLoss = tail * Mathf.Clamp01(SanitizeNonNegativeFinite(deltaTime) * 1.75f);
+            return Mathf.Max(0f, tail - appliedLoss - suppressedLoss - passiveLoss);
+        }
+
+        public static bool ShouldStartRamAfterImpactTail(
+            bool impactTailExhausted,
+            float ramEnergy,
+            float stopThreshold,
+            float physicalForwardSpeed,
+            float directionDot,
+            float physicalClosingSpeed,
+            float minPressureSpeed,
+            float minDirectionDot,
+            float minClosingSpeed)
+        {
+            return impactTailExhausted
+                && SanitizeNonNegativeFinite(ramEnergy) > Mathf.Max(0f, SanitizeFinite(stopThreshold))
+                && ShouldApplyRamContactDrive(
+                    physicalForwardSpeed,
+                    directionDot,
+                    physicalClosingSpeed,
+                    minPressureSpeed,
+                    minDirectionDot,
+                    minClosingSpeed);
+        }
+
+        public static Vector3 SuppressMovementAgainstPush(
+            Vector3 targetHorizontalVelocity,
+            Vector3 pushDirection,
+            float strength01)
+        {
+            Vector3 target = new Vector3(targetHorizontalVelocity.x, 0f, targetHorizontalVelocity.z);
+            Vector3 direction = new Vector3(pushDirection.x, 0f, pushDirection.z);
+            if (target.sqrMagnitude <= 0.0000001f || direction.sqrMagnitude <= 0.0000001f)
+            {
+                return target;
+            }
+
+            direction.Normalize();
+            float againstPushSpeed = Vector3.Dot(target, -direction);
+            if (againstPushSpeed <= 0f)
+            {
+                return target;
+            }
+
+            return target + direction * (againstPushSpeed * Mathf.Clamp01(SanitizeFinite(strength01)));
+        }
+
         public static SumoImpactResponseMode ResolveImpactResponseMode(
             SumoBallPhysicsConfig config,
             float physicalImpactSpeed,
@@ -313,6 +606,147 @@ namespace Sumo
             float targetSpeed = entrySpeed * 0.72f * ResolveShoveForceMultiplier(targetSpeedScale);
             float requestedDeltaV = targetSpeed - SanitizeFinite(victimForwardSpeed);
             return ClampImpactDeltaVStep(requestedDeltaV, maxDeltaVPerTick);
+        }
+
+        public static float ComputeTierAwareRamSeedEnergy(
+            SumoBallPhysicsConfig config,
+            SumoImpactTier tier,
+            float attackerForwardSpeed,
+            float relativeClosingSpeed,
+            float directionDot,
+            float shoveForceMultiplier,
+            float currentRamEnergy = 0f)
+        {
+            float stopThreshold = config != null ? config.RamStopEnergyThreshold : 0.08f;
+            float minRamEnergy = config != null ? config.RamMinEnergy : 0.5f;
+            float maxRamEnergy = config != null ? config.RamMaxEnergy : 7.6f;
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            maxImpactSpeed = Mathf.Max(0.01f, maxImpactSpeed);
+
+            float pressureSpeed = Mathf.Max(
+                SanitizeNonNegativeFinite(attackerForwardSpeed),
+                SanitizeNonNegativeFinite(relativeClosingSpeed) * 0.72f);
+            float speed01 = Mathf.Clamp01(pressureSpeed / maxImpactSpeed);
+            float closing01 = Mathf.Clamp01(SanitizeNonNegativeFinite(relativeClosingSpeed) / maxImpactSpeed);
+            float direction01 = Mathf.Clamp01(SanitizeFinite(directionDot));
+            float forceMultiplier = ResolveShoveForceMultiplier(shoveForceMultiplier);
+
+            float tierWeight = ResolveTierWeight01(tier);
+            float baseEnergy = Mathf.Max(
+                stopThreshold + 0.12f,
+                minRamEnergy * Mathf.Lerp(0.92f, 1.45f, tierWeight));
+            float speedEnergy = (config != null ? config.RamEnergyFromSpeed : 1.5f)
+                * Mathf.Pow(speed01, 0.82f)
+                * Mathf.Lerp(0.35f, 0.85f, tierWeight);
+            float closingEnergy = closing01 * Mathf.Lerp(0.08f, 0.32f, tierWeight);
+            float forceScale = Mathf.Lerp(0.9f, 1.18f, Mathf.Clamp01((forceMultiplier - 1f) / (DefaultMaxShoveForceMultiplier - 1f)));
+            float angleScale = Mathf.Lerp(0.72f, 1f, direction01);
+
+            float rawEnergy = (baseEnergy + speedEnergy + closingEnergy) * forceScale * angleScale;
+            rawEnergy = Mathf.Max(rawEnergy, SanitizeNonNegativeFinite(currentRamEnergy));
+
+            float hardMinimum = Mathf.Max(stopThreshold + 0.12f, minRamEnergy * 0.72f);
+            return Mathf.Clamp(
+                rawEnergy,
+                hardMinimum,
+                Mathf.Max(hardMinimum, maxRamEnergy));
+        }
+
+        public static float ComputeImpactEngagementBudgetDeltaV(
+            SumoBallPhysicsConfig config,
+            SumoImpactTier tier,
+            SumoImpactResponseMode responseMode,
+            float attackerForwardSpeed,
+            float relativeClosingSpeed,
+            float directionDot,
+            float shoveForceMultiplier)
+        {
+            float maxImpactSpeed = config != null ? config.MaxImpactSpeed : DefaultMaxImpactSpeed;
+            maxImpactSpeed = Mathf.Max(0.01f, maxImpactSpeed);
+            float pressureSpeed = Mathf.Max(
+                SanitizeNonNegativeFinite(attackerForwardSpeed),
+                SanitizeNonNegativeFinite(relativeClosingSpeed) * 0.72f);
+            float speed01 = Mathf.Clamp01(pressureSpeed / maxImpactSpeed);
+            float direction01 = Mathf.Clamp01(SanitizeFinite(directionDot));
+            float tierWeight = ResolveTierWeight01(tier);
+            float forceMultiplier = ResolveShoveForceMultiplier(shoveForceMultiplier);
+
+            float baseStep = responseMode == SumoImpactResponseMode.ArcadeBurst
+                ? (config != null ? config.ArcadeBurstMaxDeltaVPerTick : 0.48f)
+                : (config != null ? config.SoftShoveEntryMaxDeltaVPerTick : 0.13f);
+            float responseScale = responseMode == SumoImpactResponseMode.ArcadeBurst
+                ? Mathf.Lerp(1.8f, 3.0f, tierWeight)
+                : Mathf.Lerp(2.3f, 4.1f, tierWeight);
+            float speedScale = Mathf.Lerp(0.88f, 1.45f, speed01);
+            float angleScale = Mathf.Lerp(0.58f, 1f, direction01);
+            float forceScale = Mathf.Sqrt(forceMultiplier);
+
+            float budget = baseStep * responseScale * speedScale * angleScale * forceScale;
+            if (responseMode == SumoImpactResponseMode.ArcadeBurst)
+            {
+                budget = Mathf.Max(budget, pressureSpeed * Mathf.Lerp(0.10f, 0.22f, tierWeight) * angleScale);
+            }
+            else
+            {
+                budget = Mathf.Max(
+                    budget,
+                    pressureSpeed * Mathf.Lerp(0.12f, 0.20f, tierWeight) * angleScale * Mathf.Sqrt(forceMultiplier));
+            }
+
+            return Mathf.Max(0.01f, SanitizeNonNegativeFinite(budget));
+        }
+
+        public static float ComputeDiminishingResidualDeltaV(
+            float requestedDeltaV,
+            float remainingBudget,
+            float initialBudget,
+            float previousDeltaV,
+            SumoImpactResponseMode responseMode)
+        {
+            float requested = SanitizeNonNegativeFinite(requestedDeltaV);
+            float remaining = SanitizeNonNegativeFinite(remainingBudget);
+            if (requested <= 0.0001f || remaining <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float initial = Mathf.Max(0.0001f, SanitizeNonNegativeFinite(initialBudget));
+            float energy01 = Mathf.Clamp01(remaining / initial);
+            float firstWindow = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.68f : 0.82f;
+            float lowWindow = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.16f : 0.20f;
+            float budgetWindow = Mathf.Lerp(lowWindow, firstWindow, energy01);
+            float cappedByBudget = remaining * budgetWindow;
+
+            float previous = SanitizeNonNegativeFinite(previousDeltaV);
+            if (previous > 0.0001f)
+            {
+                float decay = responseMode == SumoImpactResponseMode.ArcadeBurst ? 0.86f : 0.78f;
+                cappedByBudget = Mathf.Min(cappedByBudget, previous * decay);
+            }
+
+            return Mathf.Min(requested, remaining, Mathf.Max(0f, cappedByBudget));
+        }
+
+        public static float ClampDiminishingContactDeltaV(
+            float requestedDeltaV,
+            float attackerForwardSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale,
+            float remainingBudget,
+            float initialBudget,
+            float previousDeltaV,
+            SumoImpactResponseMode responseMode)
+        {
+            float cappedByTarget = Mathf.Min(
+                SanitizeNonNegativeFinite(requestedDeltaV),
+                ComputeCappedPushDeltaV(attackerForwardSpeed, victimForwardSpeed, targetSpeedScale));
+
+            return ComputeDiminishingResidualDeltaV(
+                cappedByTarget,
+                remainingBudget,
+                initialBudget,
+                previousDeltaV,
+                responseMode);
         }
 
         public static float ClampImpactDeltaVStep(float requestedDeltaV, float maxDeltaVPerTick)
@@ -773,6 +1207,24 @@ namespace Sumo
             }
 
             return SumoImpactTier.High;
+        }
+
+        private static float ResolveTierWeight01(SumoImpactTier tier)
+        {
+            switch (tier)
+            {
+                case SumoImpactTier.Low:
+                    return 0f;
+
+                case SumoImpactTier.Mid:
+                    return 0.5f;
+
+                case SumoImpactTier.High:
+                    return 1f;
+
+                default:
+                    return 0.25f;
+            }
         }
 
         private static float SanitizeNonNegativeFinite(float value)

@@ -209,6 +209,63 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ComputeCappedRamDriveSpeed_CannotGrowPastEngagementEntrySpeed()
+        {
+            float driveSpeed = SumoImpactResolver.ComputeCappedRamDriveSpeed(
+                physicalForwardSpeed: 8f,
+                engagementEntrySpeed: 3f);
+
+            Assert.AreEqual(3f, driveSpeed, 0.0001f);
+        }
+
+        [Test]
+        public void ResolveMonotonicRamEnergy_ContinuousEngagementCannotReseedHigher()
+        {
+            float continuedEnergy = SumoImpactResolver.ResolveMonotonicRamEnergy(
+                requestedRamEnergy: 4f,
+                currentRamEnergy: 1.25f,
+                continuousEngagement: true);
+            float freshEnergy = SumoImpactResolver.ResolveMonotonicRamEnergy(
+                requestedRamEnergy: 4f,
+                currentRamEnergy: 1.25f,
+                continuousEngagement: false);
+
+            Assert.AreEqual(1.25f, continuedEnergy, 0.0001f);
+            Assert.AreEqual(4f, freshEnergy, 0.0001f);
+        }
+
+        [Test]
+        public void IsHardBreakQualified_RequiresContinuousQualifiedBreakWindow()
+        {
+            Assert.IsFalse(SumoImpactResolver.IsHardBreakQualified(
+                currentTick: 12,
+                qualifiedBreakStartTick: 0,
+                requiredBreakTicks: 6,
+                maxSeparationSinceBreak: 0.4f,
+                requiredSeparation: 0.2f));
+            Assert.IsFalse(SumoImpactResolver.IsHardBreakQualified(
+                currentTick: 12,
+                qualifiedBreakStartTick: 8,
+                requiredBreakTicks: 6,
+                maxSeparationSinceBreak: 0.4f,
+                requiredSeparation: 0.2f));
+            Assert.IsTrue(SumoImpactResolver.IsHardBreakQualified(
+                currentTick: 14,
+                qualifiedBreakStartTick: 8,
+                requiredBreakTicks: 6,
+                maxSeparationSinceBreak: 0.4f,
+                requiredSeparation: 0.2f));
+        }
+
+        [Test]
+        public void ComputeExhaustedContactStabilizationDeltaV_OnlyCapsInwardVelocity()
+        {
+            Assert.AreEqual(0f, SumoImpactResolver.ComputeExhaustedContactStabilizationDeltaV(0f, 0.04f), 0.0001f);
+            Assert.AreEqual(0.02f, SumoImpactResolver.ComputeExhaustedContactStabilizationDeltaV(0.02f, 0.04f), 0.0001f);
+            Assert.AreEqual(0.04f, SumoImpactResolver.ComputeExhaustedContactStabilizationDeltaV(0.4f, 0.04f), 0.0001f);
+        }
+
+        [Test]
         public void ResolveImpactResponseMode_NonDashLowAndMidContactUsesSoftShove()
         {
             Assert.AreEqual(
@@ -386,6 +443,58 @@ namespace Sumo.Tests
                 minPressureSpeed: 1.6f,
                 minDirectionDot: 0.2f,
                 minClosingSpeed: 0.12f));
+        }
+
+        [Test]
+        public void ComputeRamTick_ForceDropsAsEnergyDecays()
+        {
+            SumoRamTickResult fullEnergy = SumoImpactResolver.ComputeRamTick(
+                null,
+                deltaTime: 1f / 60f,
+                ramEnergy: 5f,
+                initialRamEnergy: 5f,
+                attackerForwardSpeed: 5f,
+                directionDot: 1f,
+                isPressing: true,
+                contactBlend01: 1f);
+            SumoRamTickResult partialEnergy = SumoImpactResolver.ComputeRamTick(
+                null,
+                deltaTime: 1f / 60f,
+                ramEnergy: 2f,
+                initialRamEnergy: 5f,
+                attackerForwardSpeed: 5f,
+                directionDot: 1f,
+                isPressing: true,
+                contactBlend01: 1f);
+            SumoRamTickResult lowEnergy = SumoImpactResolver.ComputeRamTick(
+                null,
+                deltaTime: 1f / 60f,
+                ramEnergy: 0.6f,
+                initialRamEnergy: 5f,
+                attackerForwardSpeed: 5f,
+                directionDot: 1f,
+                isPressing: true,
+                contactBlend01: 1f);
+
+            Assert.Greater(fullEnergy.VictimAcceleration, partialEnergy.VictimAcceleration);
+            Assert.Greater(partialEnergy.VictimAcceleration, lowEnergy.VictimAcceleration);
+        }
+
+        [Test]
+        public void ComputeRamTick_NoPhysicalPressingConsumesEnergyWithoutAcceleration()
+        {
+            SumoRamTickResult tick = SumoImpactResolver.ComputeRamTick(
+                null,
+                deltaTime: 1f / 60f,
+                ramEnergy: 3f,
+                initialRamEnergy: 3f,
+                attackerForwardSpeed: 0f,
+                directionDot: 1f,
+                isPressing: false,
+                contactBlend01: 1f);
+
+            Assert.AreEqual(0f, tick.VictimAcceleration, 0.0001f);
+            Assert.Greater(tick.EnergyDecay, 0f);
         }
 
         [Test]
@@ -653,6 +762,580 @@ namespace Sumo.Tests
             Assert.AreEqual(SumoImpactTier.Low, tier);
             Assert.IsTrue(impact.HasImpact);
             Assert.Greater(cappedDeltaV, 0f);
+        }
+
+        [Test]
+        public void ComputeTierAwareRamSeedEnergy_LowMediumAndHighStayAboveStopThreshold()
+        {
+            float lowSeed = SumoImpactResolver.ComputeTierAwareRamSeedEnergy(
+                null,
+                SumoImpactTier.Low,
+                attackerForwardSpeed: 1.6f,
+                relativeClosingSpeed: 1.4f,
+                directionDot: 1f,
+                shoveForceMultiplier: 2f);
+            float midSeed = SumoImpactResolver.ComputeTierAwareRamSeedEnergy(
+                null,
+                SumoImpactTier.Mid,
+                attackerForwardSpeed: 4f,
+                relativeClosingSpeed: 3f,
+                directionDot: 1f,
+                shoveForceMultiplier: 2f);
+            float highSeed = SumoImpactResolver.ComputeTierAwareRamSeedEnergy(
+                null,
+                SumoImpactTier.High,
+                attackerForwardSpeed: 8f,
+                relativeClosingSpeed: 6f,
+                directionDot: 1f,
+                shoveForceMultiplier: 6.8f);
+
+            Assert.Greater(lowSeed, 0.20f);
+            Assert.Greater(midSeed, lowSeed);
+            Assert.Greater(highSeed, midSeed);
+        }
+
+        [Test]
+        public void ComputeImpactEngagementBudgetDeltaV_MediumSoftShoveHasReusableBudget()
+        {
+            float budget = SumoImpactResolver.ComputeImpactEngagementBudgetDeltaV(
+                null,
+                SumoImpactTier.Mid,
+                SumoImpactResponseMode.SoftShove,
+                attackerForwardSpeed: 3.5f,
+                relativeClosingSpeed: 2.8f,
+                directionDot: 0.9f,
+                shoveForceMultiplier: 2f);
+
+            Assert.Greater(budget, 0.13f);
+        }
+
+        [Test]
+        public void ComputeDiminishingResidualDeltaV_RepeatedSoftImpulsesGetWeaker()
+        {
+            float initialBudget = 0.6f;
+            float remainingBudget = initialBudget;
+
+            float first = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 0.5f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: 0f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+            remainingBudget -= first;
+            float second = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 0.5f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: first,
+                responseMode: SumoImpactResponseMode.SoftShove);
+            remainingBudget -= second;
+            float third = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 0.5f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: second,
+                responseMode: SumoImpactResponseMode.SoftShove);
+
+            Assert.Greater(first, 0f);
+            Assert.Less(second, first);
+            Assert.Less(third, second);
+        }
+
+        [Test]
+        public void ComputeDiminishingResidualDeltaV_RepeatedArcadeImpulsesGetWeaker()
+        {
+            float initialBudget = 4f;
+            float remainingBudget = initialBudget;
+
+            float first = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 3f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: 0f,
+                responseMode: SumoImpactResponseMode.ArcadeBurst);
+            remainingBudget -= first;
+            float second = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 3f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: first,
+                responseMode: SumoImpactResponseMode.ArcadeBurst);
+            remainingBudget -= second;
+            float third = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: 3f,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: second,
+                responseMode: SumoImpactResponseMode.ArcadeBurst);
+
+            Assert.Greater(first, 0f);
+            Assert.Less(second, first);
+            Assert.Less(third, second);
+        }
+
+        [TestCase(SumoImpactTier.Low, SumoImpactResponseMode.SoftShove, 1.6f, 1.2f, 2f)]
+        [TestCase(SumoImpactTier.Mid, SumoImpactResponseMode.SoftShove, 3.4f, 2.6f, 2f)]
+        [TestCase(SumoImpactTier.High, SumoImpactResponseMode.ArcadeBurst, 6.5f, 5.2f, 6.8f)]
+        [TestCase(SumoImpactTier.High, SumoImpactResponseMode.ArcadeBurst, 9f, 7f, 6.8f)]
+        public void ComputeImpactEngagementBudgetDeltaV_AllTiersProduceDiminishingResiduals(
+            SumoImpactTier tier,
+            SumoImpactResponseMode responseMode,
+            float attackerForwardSpeed,
+            float relativeClosingSpeed,
+            float shoveForceMultiplier)
+        {
+            float initialBudget = SumoImpactResolver.ComputeImpactEngagementBudgetDeltaV(
+                null,
+                tier,
+                responseMode,
+                attackerForwardSpeed,
+                relativeClosingSpeed,
+                directionDot: 1f,
+                shoveForceMultiplier: shoveForceMultiplier);
+            float remainingBudget = initialBudget;
+
+            float first = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: initialBudget,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: 0f,
+                responseMode: responseMode);
+            remainingBudget -= first;
+            float second = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: initialBudget,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: first,
+                responseMode: responseMode);
+            remainingBudget -= second;
+            float third = SumoImpactResolver.ComputeDiminishingResidualDeltaV(
+                requestedDeltaV: initialBudget,
+                remainingBudget: remainingBudget,
+                initialBudget: initialBudget,
+                previousDeltaV: second,
+                responseMode: responseMode);
+
+            Assert.Greater(first, 0f);
+            Assert.Less(second, first);
+            Assert.Less(third, second);
+        }
+
+        [Test]
+        public void ComputeDynamicResidualImpulseDeltaV_TailLengthEmergesFromEntrySpeed()
+        {
+            int lowSteps = CountDynamicResidualTailSteps(
+                SumoImpactTier.Low,
+                SumoImpactResponseMode.SoftShove,
+                entrySpeed: 1.5f,
+                shoveForceMultiplier: 2f);
+            int midSteps = CountDynamicResidualTailSteps(
+                SumoImpactTier.Mid,
+                SumoImpactResponseMode.SoftShove,
+                entrySpeed: 3f,
+                shoveForceMultiplier: 2f);
+            int highSteps = CountDynamicResidualTailSteps(
+                SumoImpactTier.High,
+                SumoImpactResponseMode.ArcadeBurst,
+                entrySpeed: 8f,
+                shoveForceMultiplier: 6.8f);
+
+            Assert.Greater(lowSteps, 0);
+            Assert.Greater(midSteps, lowSteps);
+            Assert.Greater(highSteps, midSteps);
+        }
+
+        [Test]
+        public void ComputeDynamicResidualImpulseDeltaV_AttackerTailSpeedDropsAfterResidual()
+        {
+            float deltaV = SumoImpactResolver.ComputeDynamicResidualImpulseDeltaV(
+                tailSpeed: 3f,
+                physicalClosingSpeed: 2.5f,
+                victimForwardSpeed: 0f,
+                targetSpeedScale: 2f,
+                remainingBudget: 0.8f,
+                initialBudget: 0.8f,
+                previousDeltaV: 0.2f,
+                maxDeltaVPerTick: 0.26f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+            float attackerLoss = SumoImpactResolver.ComputeResidualAttackerSpeedLoss(
+                deltaV,
+                directionDot: 1f,
+                shoveForceMultiplier: 2f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+            float nextTailSpeed = SumoImpactResolver.ComputeNextImpactTailSpeed(
+                currentTailSpeed: 3f,
+                attackerSpeedLoss: attackerLoss,
+                unappliedResidualDeltaV: 0f,
+                deltaTime: 1f / 60f);
+
+            Assert.Greater(deltaV, 0f);
+            Assert.Greater(attackerLoss, 0f);
+            Assert.Less(nextTailSpeed, 3f);
+        }
+
+        [Test]
+        public void ShouldStartRamAfterImpactTail_WaitsForTailExhaustion()
+        {
+            Assert.IsFalse(SumoImpactResolver.ShouldStartRamAfterImpactTail(
+                impactTailExhausted: false,
+                ramEnergy: 1f,
+                stopThreshold: 0.08f,
+                physicalForwardSpeed: 3f,
+                directionDot: 1f,
+                physicalClosingSpeed: 0.5f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+            Assert.IsTrue(SumoImpactResolver.ShouldStartRamAfterImpactTail(
+                impactTailExhausted: true,
+                ramEnergy: 1f,
+                stopThreshold: 0.08f,
+                physicalForwardSpeed: 3f,
+                directionDot: 1f,
+                physicalClosingSpeed: 0.5f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+        }
+
+        [Test]
+        public void SuppressMovementAgainstPush_OnlyRemovesMovementIntoPush()
+        {
+            Vector3 pushDirection = Vector3.forward;
+            Vector3 intoPush = SumoImpactResolver.SuppressMovementAgainstPush(
+                targetHorizontalVelocity: Vector3.back * 8f,
+                pushDirection,
+                strength01: 1f);
+            Vector3 sideMove = SumoImpactResolver.SuppressMovementAgainstPush(
+                targetHorizontalVelocity: Vector3.right * 8f,
+                pushDirection,
+                strength01: 1f);
+            Vector3 awayMove = SumoImpactResolver.SuppressMovementAgainstPush(
+                targetHorizontalVelocity: Vector3.forward * 8f,
+                pushDirection,
+                strength01: 1f);
+
+            Assert.AreEqual(Vector3.zero, intoPush);
+            Assert.AreEqual(Vector3.right * 8f, sideMove);
+            Assert.AreEqual(Vector3.forward * 8f, awayMove);
+        }
+
+        [Test]
+        public void ClampDiminishingContactDeltaV_DoesNotPushVictimPastAttackerTargetSpeed()
+        {
+            float deltaV = SumoImpactResolver.ClampDiminishingContactDeltaV(
+                requestedDeltaV: 1f,
+                attackerForwardSpeed: 3f,
+                victimForwardSpeed: 2.92f,
+                targetSpeedScale: 1f,
+                remainingBudget: 2f,
+                initialBudget: 2f,
+                previousDeltaV: 0f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+
+            Assert.AreEqual(0.08f, deltaV, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeImpactEngagementBudgetDeltaV_HighSpeedArcadeKeepsReadableBurstBudget()
+        {
+            float budget = SumoImpactResolver.ComputeImpactEngagementBudgetDeltaV(
+                null,
+                SumoImpactTier.High,
+                SumoImpactResponseMode.ArcadeBurst,
+                attackerForwardSpeed: 8f,
+                relativeClosingSpeed: 6f,
+                directionDot: 1f,
+                shoveForceMultiplier: 6.8f);
+
+            Assert.Greater(budget, 0.48f);
+        }
+
+        [Test]
+        public void ComputeImpactTailResidualDeltaV_FirstResidualIsCappedBelowEntry()
+        {
+            float entryDeltaV = 0.3f;
+            float firstResidual = SumoImpactResolver.ComputeImpactTailResidualDeltaV(
+                tailSpeed: 4f,
+                physicalClosingSpeed: 4f,
+                victimForwardSpeed: 0f,
+                targetSpeedScale: 2f,
+                remainingBudget: 2f,
+                initialBudget: 2f,
+                lastResidualDeltaV: 0f,
+                entryImpactDeltaV: entryDeltaV,
+                residualAccumulator: 0f,
+                maxDeltaVPerTick: 0.5f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+            float secondResidual = SumoImpactResolver.ComputeImpactTailResidualDeltaV(
+                tailSpeed: 3.8f,
+                physicalClosingSpeed: 3.8f,
+                victimForwardSpeed: firstResidual,
+                targetSpeedScale: 2f,
+                remainingBudget: 2f - firstResidual,
+                initialBudget: 2f,
+                lastResidualDeltaV: firstResidual,
+                entryImpactDeltaV: entryDeltaV,
+                residualAccumulator: 0f,
+                maxDeltaVPerTick: 0.5f,
+                responseMode: SumoImpactResponseMode.SoftShove);
+
+            Assert.Greater(firstResidual, 0f);
+            Assert.LessOrEqual(firstResidual, SumoImpactResolver.ComputeEntryToTailResidualCap(entryDeltaV, SumoImpactResponseMode.SoftShove) + 0.0001f);
+            Assert.Greater(secondResidual, 0f);
+            Assert.Less(secondResidual, firstResidual);
+        }
+
+        [Test]
+        public void ImpactTailHandoff_WaitsUntilTickAfterFullExhaustion()
+        {
+            Assert.IsFalse(SumoImpactResolver.IsImpactTailFullyExhausted(
+                residualDeltaV: 0.01f,
+                tailSpeed: 1.5f,
+                remainingBudget: 0.5f,
+                meaningfulDeltaV: 0.05f,
+                silentDrainTicks: 3));
+            Assert.IsTrue(SumoImpactResolver.IsImpactTailFullyExhausted(
+                residualDeltaV: 0.01f,
+                tailSpeed: 0.08f,
+                remainingBudget: 0.08f,
+                meaningfulDeltaV: 0.05f,
+                silentDrainTicks: 1));
+            Assert.IsFalse(SumoImpactResolver.CanStartRamAfterImpactTailHandoff(
+                impactTailExhausted: true,
+                currentTick: 100,
+                impactTailExhaustedTick: 100,
+                ramEnergy: 1f,
+                stopThreshold: 0.08f,
+                physicalForwardSpeed: 3f,
+                directionDot: 1f,
+                physicalClosingSpeed: 0.5f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+            Assert.IsTrue(SumoImpactResolver.CanStartRamAfterImpactTailHandoff(
+                impactTailExhausted: true,
+                currentTick: 101,
+                impactTailExhaustedTick: 100,
+                ramEnergy: 1f,
+                stopThreshold: 0.08f,
+                physicalForwardSpeed: 3f,
+                directionDot: 1f,
+                physicalClosingSpeed: 0.5f,
+                minPressureSpeed: 1.6f,
+                minDirectionDot: 0.2f,
+                minClosingSpeed: 0.12f));
+        }
+
+        [Test]
+        public void ComputeImpactTailResidualDeltaV_TailLengthStillEmergesAfterEntryHit()
+        {
+            int lowSteps = CountSeparatedResidualTailSteps(
+                SumoImpactTier.Low,
+                SumoImpactResponseMode.SoftShove,
+                entrySpeed: 1.5f,
+                entryDeltaV: 0.12f,
+                shoveForceMultiplier: 2f);
+            int midSteps = CountSeparatedResidualTailSteps(
+                SumoImpactTier.Mid,
+                SumoImpactResponseMode.SoftShove,
+                entrySpeed: 3f,
+                entryDeltaV: 0.26f,
+                shoveForceMultiplier: 2f);
+            int highSteps = CountSeparatedResidualTailSteps(
+                SumoImpactTier.High,
+                SumoImpactResponseMode.ArcadeBurst,
+                entrySpeed: 8f,
+                entryDeltaV: 0.75f,
+                shoveForceMultiplier: 6.8f);
+
+            Assert.Greater(lowSteps, 0);
+            Assert.Greater(midSteps, lowSteps);
+            Assert.Greater(highSteps, midSteps);
+        }
+
+        [Test]
+        public void NpcSuppressionPreview_RemovesDriveIntoPushBeforeControllerTarget()
+        {
+            GameObject go = new GameObject("npc-suppression-test");
+            try
+            {
+                SumoNpcBallDriver driver = go.AddComponent<SumoNpcBallDriver>();
+                const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                typeof(SumoNpcBallDriver).GetField("_gameplayPushSuppressionDirection", Flags)
+                    ?.SetValue(driver, Vector3.forward);
+                typeof(SumoNpcBallDriver).GetField("_gameplayPushSuppressionStrength01", Flags)
+                    ?.SetValue(driver, 1f);
+                typeof(SumoNpcBallDriver).GetField("_gameplayPushSuppressionUntilFrame", Flags)
+                    ?.SetValue(driver, Time.frameCount + 10);
+                MethodInfo preview = typeof(SumoNpcBallDriver).GetMethod(
+                    "PreviewSuppressedMovementTargetForTests",
+                    Flags);
+
+                Vector3 suppressed = (Vector3)preview.Invoke(driver, new object[] { Vector3.back * 8f });
+                Vector3 side = (Vector3)preview.Invoke(driver, new object[] { Vector3.right * 8f });
+
+                Assert.AreEqual(Vector3.zero, suppressed);
+                Assert.AreEqual(Vector3.right * 8f, side);
+            }
+            finally
+            {
+                Object.DestroyImmediate(go);
+            }
+        }
+
+        private static int CountDynamicResidualTailSteps(
+            SumoImpactTier tier,
+            SumoImpactResponseMode responseMode,
+            float entrySpeed,
+            float shoveForceMultiplier)
+        {
+            float maxStep = responseMode == SumoImpactResponseMode.ArcadeBurst
+                ? 0.48f * shoveForceMultiplier
+                : 0.13f * shoveForceMultiplier;
+            float initialBudget = SumoImpactResolver.ComputeImpactEngagementBudgetDeltaV(
+                null,
+                tier,
+                responseMode,
+                entrySpeed,
+                relativeClosingSpeed: entrySpeed,
+                directionDot: 1f,
+                shoveForceMultiplier: shoveForceMultiplier);
+            float remainingBudget = initialBudget;
+            float previousDeltaV = 0f;
+            float tailSpeed = entrySpeed;
+            int steps = 0;
+
+            for (int i = 0; i < 32; i++)
+            {
+                float meaningful = SumoImpactResolver.ComputeResidualMeaningfulDeltaV(maxStep, responseMode);
+                float deltaV = SumoImpactResolver.ComputeDynamicResidualImpulseDeltaV(
+                    tailSpeed,
+                    physicalClosingSpeed: tailSpeed,
+                    victimForwardSpeed: 0f,
+                    targetSpeedScale: shoveForceMultiplier,
+                    remainingBudget,
+                    initialBudget,
+                    previousDeltaV,
+                    maxStep,
+                    responseMode);
+
+                if (SumoImpactResolver.IsResidualImpactTailExhausted(
+                    deltaV,
+                    tailSpeed,
+                    remainingBudget,
+                    meaningful))
+                {
+                    break;
+                }
+
+                if (previousDeltaV > 0f)
+                {
+                    Assert.Less(deltaV, previousDeltaV);
+                }
+
+                float attackerLoss = SumoImpactResolver.ComputeResidualAttackerSpeedLoss(
+                    deltaV,
+                    directionDot: 1f,
+                    shoveForceMultiplier,
+                    responseMode);
+                tailSpeed = SumoImpactResolver.ComputeNextImpactTailSpeed(
+                    tailSpeed,
+                    attackerLoss,
+                    unappliedResidualDeltaV: 0f,
+                    deltaTime: 1f / 60f);
+                remainingBudget = Mathf.Max(0f, remainingBudget - deltaV);
+                previousDeltaV = deltaV;
+                steps++;
+            }
+
+            return steps;
+        }
+
+        private static int CountSeparatedResidualTailSteps(
+            SumoImpactTier tier,
+            SumoImpactResponseMode responseMode,
+            float entrySpeed,
+            float entryDeltaV,
+            float shoveForceMultiplier)
+        {
+            float maxStep = responseMode == SumoImpactResponseMode.ArcadeBurst
+                ? 0.48f * shoveForceMultiplier
+                : 0.13f * shoveForceMultiplier;
+            float initialBudget = SumoImpactResolver.ComputeImpactEngagementBudgetDeltaV(
+                null,
+                tier,
+                responseMode,
+                entrySpeed,
+                relativeClosingSpeed: entrySpeed,
+                directionDot: 1f,
+                shoveForceMultiplier: shoveForceMultiplier);
+            float remainingBudget = initialBudget;
+            float lastResidualDeltaV = 0f;
+            float tailSpeed = entrySpeed;
+            int silentDrainTicks = 0;
+            int steps = 0;
+
+            for (int i = 0; i < 48; i++)
+            {
+                float meaningful = SumoImpactResolver.ComputeResidualMeaningfulDeltaV(maxStep, responseMode);
+                float deltaV = SumoImpactResolver.ComputeImpactTailResidualDeltaV(
+                    tailSpeed,
+                    physicalClosingSpeed: tailSpeed,
+                    victimForwardSpeed: steps * 0.02f,
+                    targetSpeedScale: shoveForceMultiplier,
+                    remainingBudget,
+                    initialBudget,
+                    lastResidualDeltaV,
+                    entryDeltaV,
+                    residualAccumulator: 0f,
+                    maxDeltaVPerTick: maxStep,
+                    responseMode: responseMode);
+
+                if (deltaV < meaningful)
+                {
+                    silentDrainTicks++;
+                    tailSpeed = SumoImpactResolver.ComputeNextImpactTailSpeed(
+                        tailSpeed,
+                        attackerSpeedLoss: 0f,
+                        unappliedResidualDeltaV: meaningful,
+                        deltaTime: 1f / 60f);
+                    remainingBudget = Mathf.Max(0f, remainingBudget - meaningful * 0.18f);
+                    if (SumoImpactResolver.IsImpactTailFullyExhausted(
+                        deltaV,
+                        tailSpeed,
+                        remainingBudget,
+                        meaningful,
+                        silentDrainTicks))
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (lastResidualDeltaV > 0f)
+                {
+                    Assert.Less(deltaV, lastResidualDeltaV);
+                }
+
+                float attackerLoss = SumoImpactResolver.ComputeResidualAttackerSpeedLoss(
+                    deltaV,
+                    directionDot: 1f,
+                    shoveForceMultiplier,
+                    responseMode);
+                tailSpeed = SumoImpactResolver.ComputeNextImpactTailSpeed(
+                    tailSpeed,
+                    attackerLoss,
+                    unappliedResidualDeltaV: 0f,
+                    deltaTime: 1f / 60f);
+                remainingBudget = Mathf.Max(0f, remainingBudget - deltaV);
+                lastResidualDeltaV = deltaV;
+                silentDrainTicks = 0;
+                steps++;
+            }
+
+            return steps;
         }
     }
 }

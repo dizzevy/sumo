@@ -118,6 +118,9 @@ namespace Sumo
         private MovementCommand _contactCommandCache;
         private bool _hasContactCommandCache;
         private float _smoothedRamDriveAssist01;
+        private Vector3 _gameplayPushSuppressionDirection = Vector3.zero;
+        private float _gameplayPushSuppressionStrength01;
+        private int _gameplayPushSuppressionUntilTick = int.MinValue;
         [Networked] private Vector3 ReplicatedMoveDirection { get; set; }
         [Networked] private float ReplicatedMoveStrength01 { get; set; }
         [Networked] private NetworkBool ReplicatedBrake { get; set; }
@@ -257,6 +260,28 @@ namespace Sumo
             _hasExternalMovementCommand = false;
             _externalMovementCommand = default;
             _contactCommandTick = int.MinValue;
+        }
+
+        internal void RegisterGameplayPushSuppression(
+            Vector3 pushDirection,
+            float strength01,
+            int currentTick,
+            int durationTicks)
+        {
+            Vector3 direction = new Vector3(pushDirection.x, 0f, pushDirection.z);
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            direction.Normalize();
+            _gameplayPushSuppressionDirection = direction;
+            _gameplayPushSuppressionStrength01 = Mathf.Max(
+                _gameplayPushSuppressionStrength01,
+                Mathf.Clamp01(strength01));
+            _gameplayPushSuppressionUntilTick = Mathf.Max(
+                _gameplayPushSuppressionUntilTick,
+                currentTick + Mathf.Max(1, durationTicks));
         }
 
         public Vector3 GetContactIntentDirection(Vector3 fallbackVelocity)
@@ -470,6 +495,9 @@ namespace Sumo
             Vector3 playerBlockNormal,
             float deltaTime)
         {
+            targetHorizontalVelocity = ApplyGameplayPushSuppression(targetHorizontalVelocity);
+            hasMoveInput = targetHorizontalVelocity.sqrMagnitude > 0.0001f;
+
             Vector3 requiredAcceleration = Vector3.zero;
             float maxSpeed = GetMaxSpeed();
 
@@ -550,6 +578,23 @@ namespace Sumo
 
             ApplyAcceleration(requiredAcceleration, deltaTime);
             ApplySoftSpeedLimit(1f, deltaTime);
+        }
+
+        private Vector3 ApplyGameplayPushSuppression(Vector3 targetHorizontalVelocity)
+        {
+            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            if (currentTick > _gameplayPushSuppressionUntilTick
+                || _gameplayPushSuppressionStrength01 <= 0.0001f
+                || _gameplayPushSuppressionDirection.sqrMagnitude < 0.0001f)
+            {
+                _gameplayPushSuppressionStrength01 = 0f;
+                return targetHorizontalVelocity;
+            }
+
+            return SumoImpactResolver.SuppressMovementAgainstPush(
+                targetHorizontalVelocity,
+                _gameplayPushSuppressionDirection,
+                _gameplayPushSuppressionStrength01);
         }
 
         private Vector3 ComputeAirAcceleration(Vector3 targetHorizontalVelocity, Vector3 horizontalVelocity)

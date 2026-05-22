@@ -94,6 +94,9 @@ namespace Sumo
         private bool _zoneHolding;
         private bool _localStopStartBindEnabled = true;
         private float _scaledRadius = 0.5f;
+        private Vector3 _gameplayPushSuppressionDirection = Vector3.zero;
+        private float _gameplayPushSuppressionStrength01;
+        private int _gameplayPushSuppressionUntilFrame = int.MinValue;
 
         public bool IsMoving => _isMoving;
         public bool DisablePlayerOnlyComponents => disablePlayerOnlyComponents;
@@ -159,23 +162,34 @@ namespace Sumo
                 || (!hasMoveInput && hardBrakeWithoutMoveInput)
                 || (_zoneHolding && brakeInsideZone)
                 || (moveTowardZone && !hasMoveInput);
+            Vector3 targetHorizontalVelocity = hasMoveInput
+                ? moveDirection * effectiveTargetSpeed
+                : Vector3.zero;
+            targetHorizontalVelocity = ApplyGameplayPushSuppression(targetHorizontalVelocity);
+            bool hasSuppressedMoveInput = targetHorizontalVelocity.sqrMagnitude > 0.0001f;
 
             if (ShouldDriveThroughPlayerController())
             {
-                _ballController.SetExternalMovementTarget(moveDirection, effectiveTargetSpeed, hardBrake);
-                ApplyRotation(moveDirection, Time.fixedDeltaTime);
+                _ballController.SetExternalTargetHorizontalVelocity(
+                    targetHorizontalVelocity,
+                    hardBrake || (hasMoveInput && !hasSuppressedMoveInput));
+                Vector3 rotationDirection = hasSuppressedMoveInput
+                    ? targetHorizontalVelocity.normalized
+                    : moveDirection;
+                ApplyRotation(rotationDirection, Time.fixedDeltaTime);
                 return;
             }
 
             if (driveStandaloneRigidbody)
             {
-                Vector3 targetHorizontalVelocity = hasMoveInput
-                    ? moveDirection * effectiveTargetSpeed
-                    : Vector3.zero;
-                ApplyStandaloneMovement(targetHorizontalVelocity, hasMoveInput, hardBrake, Time.fixedDeltaTime);
+                ApplyStandaloneMovement(
+                    targetHorizontalVelocity,
+                    hasSuppressedMoveInput,
+                    hardBrake || (hasMoveInput && !hasSuppressedMoveInput),
+                    Time.fixedDeltaTime);
             }
 
-            ApplyRotation(moveDirection, Time.fixedDeltaTime);
+            ApplyRotation(hasSuppressedMoveInput ? targetHorizontalVelocity.normalized : moveDirection, Time.fixedDeltaTime);
         }
 
         public void SetMoving(bool moving)
@@ -190,6 +204,28 @@ namespace Sumo
         public void ToggleMoving()
         {
             SetMoving(!_isMoving);
+        }
+
+        internal void RegisterGameplayPushSuppression(
+            Vector3 pushDirection,
+            float strength01,
+            int currentTick,
+            int durationTicks)
+        {
+            Vector3 direction = new Vector3(pushDirection.x, 0f, pushDirection.z);
+            if (direction.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            direction.Normalize();
+            _gameplayPushSuppressionDirection = direction;
+            _gameplayPushSuppressionStrength01 = Mathf.Max(
+                _gameplayPushSuppressionStrength01,
+                Mathf.Clamp01(strength01));
+            _gameplayPushSuppressionUntilFrame = Mathf.Max(
+                _gameplayPushSuppressionUntilFrame,
+                Time.frameCount + Mathf.Max(1, durationTicks));
         }
 
         public void ConfigureRuntimeSpawnedNpc()
@@ -264,6 +300,27 @@ namespace Sumo
 
             moveDirection.Normalize();
             return true;
+        }
+
+        private Vector3 ApplyGameplayPushSuppression(Vector3 targetHorizontalVelocity)
+        {
+            if (Time.frameCount > _gameplayPushSuppressionUntilFrame
+                || _gameplayPushSuppressionStrength01 <= 0.0001f
+                || _gameplayPushSuppressionDirection.sqrMagnitude < 0.0001f)
+            {
+                _gameplayPushSuppressionStrength01 = 0f;
+                return targetHorizontalVelocity;
+            }
+
+            return SumoImpactResolver.SuppressMovementAgainstPush(
+                targetHorizontalVelocity,
+                _gameplayPushSuppressionDirection,
+                _gameplayPushSuppressionStrength01);
+        }
+
+        internal Vector3 PreviewSuppressedMovementTargetForTests(Vector3 targetHorizontalVelocity)
+        {
+            return ApplyGameplayPushSuppression(targetHorizontalVelocity);
         }
 
         private bool TryResolveZoneDirection(out Vector3 moveDirection)

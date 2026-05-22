@@ -14,7 +14,7 @@ namespace Sumo
         [SerializeField] private Canvas canvasRoot;
         [SerializeField] private Text speedText;
         [SerializeField] private bool autoCreateCanvas = true;
-        [SerializeField] private Vector2 anchoredPosition = new Vector2(0f, 58f);
+        [SerializeField] private Vector2 anchoredPosition = new Vector2(0f, 150f);
         [SerializeField] private int fontSize = 42;
         [SerializeField] private Color textColor = Color.white;
         [SerializeField] private bool padWithLeadingZeros;
