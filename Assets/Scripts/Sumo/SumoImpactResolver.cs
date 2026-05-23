@@ -127,6 +127,15 @@ namespace Sumo
         private const float DefaultMaxShoveForceMultiplier = DefaultHighTierShoveMultiplier;
         private const float DefaultHighSpeedFatsoCounterMinIncomingMultiplier = 0.55f;
         private const float DefaultHighSpeedFatsoCounterMaxIncomingMultiplier = 0.90f;
+        private const int DefaultReImpactCooldownTicks = 4;
+        private const int DefaultReImpactMinBreakTicks = 1;
+        private const float DefaultReImpactMinSeparation = 0.045f;
+        private const float DefaultReImpactMinEnergy01 = 0.34f;
+        private const float DefaultReImpactMinCappedDeltaV = 0.035f;
+        private const float DefaultReImpactMinImpulseScale = 0.28f;
+        private const float DefaultReImpactMaxImpulseScale = 0.72f;
+        private const float DefaultReImpactEnergySpendShare = 0.34f;
+        private const float DefaultReImpactReserveShare = 0.24f;
 
         public static SumoAttackerDecision ResolveAttacker(
             float firstApproachSpeed,
@@ -320,6 +329,127 @@ namespace Sumo
             return Mathf.Min(
                 Mathf.Max(0f, SanitizeFinite(requestedDeltaV)),
                 Mathf.Max(0f, SanitizeFinite(maxDeltaVPerTick)));
+        }
+
+        public static bool HasReImpactSeparation(
+            int currentTick,
+            int breakStartTick,
+            float maxSeparationSinceBreak,
+            int minBreakTicks = DefaultReImpactMinBreakTicks,
+            float minSeparation = DefaultReImpactMinSeparation)
+        {
+            return breakStartTick > 0
+                && currentTick - breakStartTick >= Mathf.Max(1, minBreakTicks)
+                && SanitizeNonNegativeFinite(maxSeparationSinceBreak) >= Mathf.Max(0f, minSeparation);
+        }
+
+        public static bool ShouldStartReImpact(
+            int currentTick,
+            int lastImpactTick,
+            int breakStartTick,
+            float maxSeparationSinceBreak,
+            float ramEnergy,
+            float initialRamEnergy,
+            float cappedDeltaV,
+            bool attackerStillWins,
+            bool directionValid,
+            int cooldownTicks = DefaultReImpactCooldownTicks,
+            int minBreakTicks = DefaultReImpactMinBreakTicks,
+            float minSeparation = DefaultReImpactMinSeparation,
+            float minEnergy01 = DefaultReImpactMinEnergy01,
+            float minCappedDeltaV = DefaultReImpactMinCappedDeltaV)
+        {
+            if (!attackerStillWins || !directionValid)
+            {
+                return false;
+            }
+
+            if (lastImpactTick > 0 && currentTick - lastImpactTick < Mathf.Max(0, cooldownTicks))
+            {
+                return false;
+            }
+
+            if (!HasReImpactSeparation(currentTick, breakStartTick, maxSeparationSinceBreak, minBreakTicks, minSeparation))
+            {
+                return false;
+            }
+
+            if (ComputeReImpactEnergy01(ramEnergy, initialRamEnergy) < Mathf.Clamp01(minEnergy01))
+            {
+                return false;
+            }
+
+            return SanitizeNonNegativeFinite(cappedDeltaV) >= Mathf.Max(0f, minCappedDeltaV);
+        }
+
+        public static float ComputeReImpactEnergy01(float ramEnergy, float initialRamEnergy)
+        {
+            float initial = SanitizeNonNegativeFinite(initialRamEnergy);
+            if (initial <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(SanitizeNonNegativeFinite(ramEnergy) / initial);
+        }
+
+        public static float ComputeReImpactImpulseScale(
+            float ramEnergy,
+            float initialRamEnergy,
+            float minEnergy01 = DefaultReImpactMinEnergy01,
+            float minScale = DefaultReImpactMinImpulseScale,
+            float maxScale = DefaultReImpactMaxImpulseScale)
+        {
+            float energy01 = ComputeReImpactEnergy01(ramEnergy, initialRamEnergy);
+            float minEnergy = Mathf.Clamp01(minEnergy01);
+            if (energy01 < minEnergy)
+            {
+                return 0f;
+            }
+
+            float lowScale = Mathf.Max(0f, Mathf.Min(minScale, maxScale));
+            float highScale = Mathf.Max(lowScale, Mathf.Max(minScale, maxScale));
+            float t = Mathf.InverseLerp(minEnergy, Mathf.Max(minEnergy + 0.0001f, 1f), energy01);
+            return Mathf.Lerp(lowScale, highScale, t);
+        }
+
+        public static float ComputeReImpactEnergySpend(
+            float ramEnergy,
+            float initialRamEnergy,
+            float spendShare = DefaultReImpactEnergySpendShare,
+            float reserveShare = DefaultReImpactReserveShare)
+        {
+            float currentEnergy = SanitizeNonNegativeFinite(ramEnergy);
+            float reserveEnergy = SanitizeNonNegativeFinite(initialRamEnergy) * Mathf.Clamp01(reserveShare);
+            float requestedSpend = currentEnergy * Mathf.Clamp01(spendShare);
+            float maxSpend = Mathf.Max(0f, currentEnergy - reserveEnergy);
+            return Mathf.Min(requestedSpend, maxSpend);
+        }
+
+        public static float ComputeRemainingRamEnergyAfterReImpact(
+            float ramEnergy,
+            float initialRamEnergy,
+            float spendShare = DefaultReImpactEnergySpendShare,
+            float reserveShare = DefaultReImpactReserveShare)
+        {
+            float currentEnergy = SanitizeNonNegativeFinite(ramEnergy);
+            return Mathf.Max(0f, currentEnergy - ComputeReImpactEnergySpend(
+                currentEnergy,
+                initialRamEnergy,
+                spendShare,
+                reserveShare));
+        }
+
+        public static float ComputeReImpactDeltaV(
+            float requestedDeltaV,
+            float cappedPushDeltaV,
+            float energyScale,
+            float maxDeltaVPerTick)
+        {
+            float scaledRequest = SanitizeNonNegativeFinite(requestedDeltaV)
+                * Mathf.Clamp01(SanitizeNonNegativeFinite(energyScale));
+            float cappedRequest = Mathf.Min(scaledRequest, SanitizeNonNegativeFinite(cappedPushDeltaV));
+            return ClampImpactDeltaVStep(cappedRequest, maxDeltaVPerTick);
         }
 
         public static bool ShouldUseFirstImpactVisualLaunch(SumoImpactResponseMode responseMode)

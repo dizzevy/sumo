@@ -331,6 +331,126 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ShouldStartReImpact_RequiresBreakCooldownEnergyAndDelta()
+        {
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 12,
+                lastImpactTick: 4,
+                breakStartTick: 0,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.8f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 7,
+                lastImpactTick: 4,
+                breakStartTick: 5,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.8f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 12,
+                lastImpactTick: 4,
+                breakStartTick: 10,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.6f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 12,
+                lastImpactTick: 4,
+                breakStartTick: 10,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.8f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.02f,
+                attackerStillWins: true,
+                directionValid: true));
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 12,
+                lastImpactTick: 4,
+                breakStartTick: 10,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.8f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: false,
+                directionValid: true));
+
+            Assert.IsTrue(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 12,
+                lastImpactTick: 4,
+                breakStartTick: 10,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: 0.8f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true));
+        }
+
+        [Test]
+        public void ComputeReImpactImpulseScale_DecreasesWithEnergy()
+        {
+            float lowScale = SumoImpactResolver.ComputeReImpactImpulseScale(0.68f, 2f);
+            float midScale = SumoImpactResolver.ComputeReImpactImpulseScale(1.2f, 2f);
+            float highScale = SumoImpactResolver.ComputeReImpactImpulseScale(2f, 2f);
+
+            Assert.AreEqual(0f, SumoImpactResolver.ComputeReImpactImpulseScale(0.6f, 2f), 0.0001f);
+            Assert.AreEqual(0.28f, lowScale, 0.0001f);
+            Assert.Less(lowScale, midScale);
+            Assert.Less(midScale, highScale);
+            Assert.AreEqual(0.72f, highScale, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeRemainingRamEnergyAfterReImpact_SpendsWithoutIncreasingAndLeavesReserve()
+        {
+            float initialEnergy = 2f;
+            float fullEnergyRemaining = SumoImpactResolver.ComputeRemainingRamEnergyAfterReImpact(2f, initialEnergy);
+            float thresholdEnergyRemaining = SumoImpactResolver.ComputeRemainingRamEnergyAfterReImpact(0.68f, initialEnergy);
+
+            Assert.LessOrEqual(fullEnergyRemaining, 2f);
+            Assert.AreEqual(1.32f, fullEnergyRemaining, 0.0001f);
+            Assert.AreEqual(0.48f, thresholdEnergyRemaining, 0.0001f);
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 20,
+                lastImpactTick: 12,
+                breakStartTick: 18,
+                maxSeparationSinceBreak: 0.06f,
+                ramEnergy: thresholdEnergyRemaining,
+                initialRamEnergy: initialEnergy,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true));
+        }
+
+        [Test]
+        public void ComputeReImpactDeltaV_RespectsCappedPushTarget()
+        {
+            float victimForwardSpeed = 4f;
+            float cappedPushDeltaV = SumoImpactResolver.ComputeCappedPushDeltaV(
+                attackerForwardSpeed: 5f,
+                victimForwardSpeed: victimForwardSpeed);
+
+            float deltaV = SumoImpactResolver.ComputeReImpactDeltaV(
+                requestedDeltaV: 10f,
+                cappedPushDeltaV: cappedPushDeltaV,
+                energyScale: 0.72f,
+                maxDeltaVPerTick: 10f);
+
+            Assert.AreEqual(1f, deltaV, 0.0001f);
+            Assert.AreEqual(5f, victimForwardSpeed + deltaV, 0.0001f);
+        }
+
+        [Test]
         public void ShouldApplyPredictedVictimPush_RequiresContactAndAttackerOwnedRemoteProxy()
         {
             Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedVictimPush(

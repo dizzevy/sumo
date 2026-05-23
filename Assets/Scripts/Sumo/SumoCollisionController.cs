@@ -2200,9 +2200,9 @@ namespace Sumo
                 return 1f;
             }
 
-            bool isImpactWindow = pairState.State == SumoPairState.InitialImpact
-                && pairState.StartTick > 0
-                && currentTick - pairState.StartTick < ActiveCombatVictimImpactResponseTicks;
+            bool isImpactWindow = (pairState.State == SumoPairState.InitialImpact || pairState.State == SumoPairState.Ramming)
+                && pairState.ImpactLatchTick > 0
+                && currentTick - pairState.ImpactLatchTick < ActiveCombatVictimImpactResponseTicks;
 
             if (isImpactWindow)
             {
@@ -2693,7 +2693,11 @@ namespace Sumo
             pairState.LastRamTick = currentTick;
 
             float deltaTime = Runner != null ? Runner.DeltaTime : Time.fixedDeltaTime;
-            ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
+            bool burstComplete = ApplyInitialImpactBurstStep(ref pairState, attacker, victim, hasContact, mode);
+            if (!burstComplete && pairState.ImpactLatchTick > pairState.StartTick)
+            {
+                return;
+            }
 
             if (!hasContact)
             {
@@ -2827,6 +2831,36 @@ namespace Sumo
             float minPressureSpeed = GetPairMinRamPressureSpeed(attacker, victim);
             float minDirectionDot = GetPairRamMinDirectionDot(attacker, victim);
             bool isPressing = attackerForwardSpeed >= minPressureSpeed && directionDot >= minDirectionDot;
+            float victimForwardSpeed = Vector3.Dot(victimVelocity, liveDirection);
+            float currentRelativeClosingSpeed = Mathf.Max(0f, Vector3.Dot(attackerVelocity - victimVelocity, liveDirection));
+            float currentSpeedAdvantage = Mathf.Max(0f, attackerForwardSpeed - victimForwardSpeed);
+            float reImpactClosingSpeed = Mathf.Max(currentRelativeClosingSpeed, currentSpeedAdvantage);
+
+            if (TryApplyReImpact(
+                ref pairState,
+                currentTick,
+                attacker,
+                victim,
+                liveDirection,
+                attackerVelocity,
+                victimVelocity,
+                attackerForwardSpeed,
+                reImpactClosingSpeed,
+                directionDot,
+                isPressing,
+                shoveForceMultiplier,
+                mode))
+            {
+                return;
+            }
+
+            if (SumoImpactResolver.HasReImpactSeparation(
+                currentTick,
+                pairState.BreakStartTick,
+                pairState.MaxSeparationSinceBreak))
+            {
+                ClearReImpactBreakMarkers(ref pairState);
+            }
 
             SumoRamTickResult ramTick = SumoImpactResolver.ComputeRamTick(
                 attacker.physicsConfig,
@@ -2838,7 +2872,6 @@ namespace Sumo
                 isPressing,
                 pairState.RamContactBlend);
 
-            float victimForwardSpeed = Vector3.Dot(victimVelocity, liveDirection);
             float desiredVictimSpeed = SumoImpactResolver.ComputeCappedPushTargetSpeed(
                 attackerForwardSpeed,
                 victimForwardSpeed,
@@ -3536,6 +3569,204 @@ namespace Sumo
             return true;
         }
 
+        private bool TryApplyReImpact(
+            ref SumoRamState pairState,
+            int currentTick,
+            SumoCollisionController attacker,
+            SumoCollisionController victim,
+            Vector3 attackDirection,
+            Vector3 attackerVelocity,
+            Vector3 victimVelocity,
+            float attackerForwardSpeed,
+            float relativeClosingSpeed,
+            float directionDot,
+            bool attackerStillWins,
+            float shoveForceMultiplier,
+            SimulationMode mode)
+        {
+            if (pairState.LastImpactTick == int.MinValue
+                || attacker == null
+                || victim == null
+                || attacker._rigidbody == null
+                || victim._rigidbody == null
+                || attacker._rigidbody.isKinematic
+                || victim._rigidbody.isKinematic)
+            {
+                return false;
+            }
+
+            if (!ShouldRunPredictedCombatForAttacker(attacker, victim, mode))
+            {
+                return false;
+            }
+
+            Vector3 horizontalDirection = GetHorizontalDirection(attackDirection);
+            if (horizontalDirection.sqrMagnitude < 0.0001f)
+            {
+                horizontalDirection = ResolveDirection(
+                    attacker._rigidbody.worldCenterOfMass,
+                    victim._rigidbody.worldCenterOfMass,
+                    pairState.ContactNormal);
+                horizontalDirection = GetHorizontalDirection(horizontalDirection);
+            }
+
+            bool directionValid = horizontalDirection.sqrMagnitude > 0.0001f;
+            if (directionValid)
+            {
+                horizontalDirection.Normalize();
+            }
+
+            float victimForwardBeforeImpact = directionValid
+                ? Vector3.Dot(victim._rigidbody.linearVelocity, horizontalDirection)
+                : 0f;
+            float cappedVictimDeltaV = directionValid
+                ? SumoImpactResolver.ComputeCappedPushDeltaV(
+                    attackerForwardSpeed,
+                    victimForwardBeforeImpact,
+                    shoveForceMultiplier)
+                : 0f;
+
+            if (!SumoImpactResolver.ShouldStartReImpact(
+                currentTick,
+                pairState.LastImpactTick,
+                pairState.BreakStartTick,
+                pairState.MaxSeparationSinceBreak,
+                pairState.RamEnergy,
+                pairState.InitialRamEnergy,
+                cappedVictimDeltaV,
+                attackerStillWins,
+                directionValid))
+            {
+                return false;
+            }
+
+            float configuredDashMultiplier = attacker.physicsConfig != null
+                ? attacker.physicsConfig.DashImpactMultiplier
+                : 1f;
+            float dashMultiplier = attacker.ballController != null
+                ? attacker.ballController.GetDashImpactMultiplier(configuredDashMultiplier)
+                : Mathf.Max(1f, configuredDashMultiplier);
+
+            SumoInitialImpactResult impactResult = SumoImpactResolver.ComputeInitialImpact(
+                attacker.physicsConfig,
+                attackerForwardSpeed,
+                GetAttackerTierReferenceTopSpeed(attacker),
+                relativeClosingSpeed,
+                directionDot,
+                dashMultiplier);
+
+            if (!impactResult.HasImpact)
+            {
+                return false;
+            }
+
+            float energyScale = SumoImpactResolver.ComputeReImpactImpulseScale(
+                pairState.RamEnergy,
+                pairState.InitialRamEnergy);
+            float requestedVictimDeltaV = SumoImpactResolver.ApplyShoveForceMultiplier(
+                impactResult.VictimImpulse / Mathf.Max(0.01f, victim._rigidbody.mass),
+                shoveForceMultiplier);
+            float reImpactDeltaV = SumoImpactResolver.ComputeReImpactDeltaV(
+                requestedVictimDeltaV,
+                cappedVictimDeltaV,
+                energyScale,
+                GetScaledArcadeBurstMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier));
+
+            if (reImpactDeltaV <= 0.0001f)
+            {
+                return false;
+            }
+
+            Vector3 impulseDirection = BuildImpulseDirection(
+                horizontalDirection,
+                GetImpactVerticalLift(attacker));
+            float scaledRequestedVictimDeltaV = requestedVictimDeltaV * energyScale;
+            float appliedVictimShare = scaledRequestedVictimDeltaV > 0.0001f
+                ? Mathf.Clamp01(reImpactDeltaV / scaledRequestedVictimDeltaV)
+                : 0f;
+            float attackerRecoilDeltaV = impactResult.AttackerRecoilImpulse
+                / Mathf.Max(0.01f, attacker._rigidbody.mass)
+                * energyScale
+                * appliedVictimShare;
+            float appliedVictimImpulse = reImpactDeltaV * Mathf.Max(0.01f, victim._rigidbody.mass);
+            float victimImpactTargetSpeed = victimForwardBeforeImpact + reImpactDeltaV;
+
+            pairState.State = SumoPairState.Ramming;
+            pairState.AttackerController = attacker;
+            pairState.VictimController = victim;
+            pairState.AttackerRef = GetControllerKey(attacker);
+            pairState.VictimRef = GetControllerKey(victim);
+            pairState.ImpactResponseMode = SumoImpactResponseMode.ArcadeBurst;
+            pairState.LastImpactTick = currentTick;
+            pairState.ImpactLatchTick = currentTick;
+            pairState.InitialImpactSpeed = attackerForwardSpeed;
+            pairState.InitialImpulse = appliedVictimImpulse;
+            pairState.InitialImpactDuration = GetPairImpactBurstDuration(attacker, victim);
+            pairState.InitialImpactElapsed = 0f;
+            pairState.ImpactRamUnlockTick = 0;
+            pairState.ImpactBurstGraceUntilTick = currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration);
+            pairState.InitialVictimDeltaV = reImpactDeltaV;
+            pairState.InitialAttackerDeltaV = attackerRecoilDeltaV;
+            pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
+            pairState.RamContactBlend = Mathf.Max(pairState.RamContactBlend, RamContactStartBlend);
+            pairState.RamEnergy = SumoImpactResolver.ComputeRemainingRamEnergyAfterReImpact(
+                pairState.RamEnergy,
+                pairState.InitialRamEnergy);
+            pairState.ContactDirection = impulseDirection;
+            pairState.DirectionDot = directionDot;
+            pairState.ReengageReadyTick = 0;
+            pairState.ReimpactSuppressedUntilHardBreak = true;
+            ClearReImpactBreakMarkers(ref pairState);
+
+            ApplyInitialImpactKickoff(ref pairState, attacker, victim, mode);
+
+            if (mode == SimulationMode.Authoritative)
+            {
+                SumoImpactData impactData = new SumoImpactData(
+                    attacker.Object,
+                    victim.Object,
+                    impulseDirection,
+                    attackerVelocity - victimVelocity,
+                    attackerForwardSpeed,
+                    relativeClosingSpeed,
+                    impactResult.SpeedCurve,
+                    impactResult.AngleScale,
+                    impactResult.DashMultiplier,
+                    appliedVictimImpulse,
+                    currentTick,
+                    pairState.ContactPoint);
+
+                float presentationStrength = ComputeVictimPresentationStrength(attacker, impactResult)
+                    * Mathf.Clamp01(energyScale);
+                victim.PublishVictimPresentationImpact(presentationStrength);
+
+                PublishVictimPush(
+                    victim,
+                    PushPhaseImpact,
+                    horizontalDirection,
+                    victimImpactTargetSpeed,
+                    victim.physicsConfig != null ? Mathf.Min(victim.physicsConfig.VictimLocalImpactCatchupAcceleration, 28f) : 28f,
+                    Mathf.Clamp01(energyScale),
+                    pairState.ShoveForceMultiplier,
+                    currentTick);
+
+                attacker.ImpactApplied?.Invoke(impactData);
+                victim.ImpactApplied?.Invoke(impactData);
+            }
+            else
+            {
+                PredictedPairLastImpactTick[pairState.PairKey] = currentTick;
+            }
+
+            if (logImpacts || attacker.logImpacts || victim.logImpacts)
+            {
+                Debug.Log(
+                    $"SumoCollisionController: re-impact {attacker.name} -> {victim.name}; impulse={appliedVictimImpulse:0.00}; deltaV={reImpactDeltaV:0.00}; speed={attackerForwardSpeed:0.00}; energyScale={energyScale:0.00}; ramEnergy={pairState.RamEnergy:0.00}; tick={currentTick}; mode={mode}");
+            }
+
+            return true;
+        }
+
         private bool TryStartRamWithoutImpact(
             ref SumoRamState pairState,
             int currentTick,
@@ -3851,6 +4082,12 @@ namespace Sumo
             float requiredDistance = GetPairReengageDistance(first, second);
             bool distanceSatisfied = pairState.MaxSeparationSinceBreak >= requiredDistance;
             return breakSatisfied && distanceSatisfied;
+        }
+
+        private static void ClearReImpactBreakMarkers(ref SumoRamState pairState)
+        {
+            pairState.BreakStartTick = 0;
+            pairState.MaxSeparationSinceBreak = 0f;
         }
 
         private static bool ShouldRemoveState(in SumoRamState pairState, int currentTick, int contactBreakTicks)
