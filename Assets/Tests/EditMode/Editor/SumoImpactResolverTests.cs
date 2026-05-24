@@ -463,6 +463,69 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ComputeImpactToRamHandoffScale_RampsFromFloorToOne()
+        {
+            float start = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: 10,
+                handoffDurationTicks: 5,
+                startScale: 0.34f);
+            float mid = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 12,
+                handoffStartTick: 10,
+                handoffDurationTicks: 5,
+                startScale: 0.34f);
+            float end = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 15,
+                handoffStartTick: 10,
+                handoffDurationTicks: 5,
+                startScale: 0.34f);
+
+            Assert.AreEqual(0.34f, start, 0.0001f);
+            Assert.Less(start, mid);
+            Assert.Less(mid, end);
+            Assert.AreEqual(1f, end, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeImpactToRamHandoffScale_InvalidOrExpiredReturnsOne()
+        {
+            Assert.AreEqual(1f, SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: -1,
+                handoffDurationTicks: 5,
+                startScale: 0.34f), 0.0001f);
+            Assert.AreEqual(1f, SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: 5,
+                handoffDurationTicks: 0,
+                startScale: 0.34f), 0.0001f);
+            Assert.AreEqual(1f, SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: 5,
+                handoffDurationTicks: 5,
+                startScale: 0.34f), 0.0001f);
+        }
+
+        [Test]
+        public void ComputeImpactToRamHandoffScale_ClampsToUnitRange()
+        {
+            float negativeFloor = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: 10,
+                handoffDurationTicks: 5,
+                startScale: -2f);
+            float tooLargeFloor = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick: 10,
+                handoffStartTick: 10,
+                handoffDurationTicks: 5,
+                startScale: 2f);
+
+            Assert.AreEqual(0f, negativeFloor, 0.0001f);
+            Assert.AreEqual(1f, tooLargeFloor, 0.0001f);
+        }
+
+        [Test]
         public void ComputeEnergyScaledPushTargetSpeed_DecreasesWithEnergy()
         {
             float victimForwardSpeed = 0f;

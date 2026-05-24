@@ -41,6 +41,7 @@ namespace Sumo
         public int ImpactLatchTick;
         public int ImpactRamUnlockTick;
         public int ImpactBurstGraceUntilTick;
+        public int RamHandoffStartTick;
         public int ContactEpisodeStartTick;
         public int LastStableBreakTick;
         public int MaxRamDurationTicks;

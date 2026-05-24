@@ -274,6 +274,34 @@ namespace Sumo
             return maxDelta * Mathf.Lerp(floor, 1f, shapedEnergy);
         }
 
+        public static float ComputeImpactToRamHandoffScale(
+            int currentTick,
+            int handoffStartTick,
+            int handoffDurationTicks,
+            float startScale)
+        {
+            if (handoffStartTick < 0 || handoffDurationTicks <= 0)
+            {
+                return 1f;
+            }
+
+            float floor = Mathf.Clamp01(SanitizeNonNegativeFinite(startScale));
+            if (currentTick < handoffStartTick)
+            {
+                return floor;
+            }
+
+            int elapsedTicks = currentTick - handoffStartTick;
+            if (elapsedTicks >= handoffDurationTicks)
+            {
+                return 1f;
+            }
+
+            float normalizedTime = Mathf.Clamp01(elapsedTicks / Mathf.Max(1f, handoffDurationTicks));
+            float smoothTime = normalizedTime * normalizedTime * (3f - 2f * normalizedTime);
+            return Mathf.Lerp(floor, 1f, smoothTime);
+        }
+
         public static float ComputeCappedPhysicalImpactSpeed(
             SumoBallPhysicsConfig config,
             float entryPhysicalForwardSpeed,

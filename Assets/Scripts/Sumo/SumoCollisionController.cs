@@ -75,6 +75,7 @@ namespace Sumo
         [Networked] private float NetworkVictimPushForceMultiplier { get; set; }
         [Networked] private float NetworkVictimPushAssist01 { get; set; }
         [Networked] private float NetworkRamDriveAssist01 { get; set; }
+        [Networked] private int NetworkArcadeVictimPresentationUntilTick { get; set; }
 
         public int VictimPresentationSignalSequence
         {
@@ -262,6 +263,10 @@ namespace Sumo
         private const float RamContactBlendRisePerSecond = 13f;
         private const float RamContactBlendFallPerSecond = 7f;
         private const float RamContactStartBlend = 0.24f;
+        private const int ImpactToRamHandoffTicks = 5;
+        private const float ImpactToRamHandoffStartScale = 0.34f;
+        private const float ImpactToRamPresentationStartAssist = 0.72f;
+        private const float ImpactToRamPresentationEndAssist = 0.35f;
         private const float ActivePhaseContactSeparationEpsilon = 0.008f;
         private const float ActivePhaseContactExtraTolerance = 0.012f;
         private const float PairDirectionBlend = 0.14f;
@@ -413,6 +418,13 @@ namespace Sumo
             _authorityVictimPushPreviousAcceleration = NetworkVictimPushAcceleration;
             _authorityVictimPushPreviousEnergy01 = NetworkVictimPushEnergy01;
             _authorityVictimPushPreviousForceMultiplier = ResolveAppliedShoveForceMultiplier(NetworkVictimPushForceMultiplier);
+
+            int currentTick = Runner != null ? Runner.Tick.Raw : 0;
+            if (NetworkArcadeVictimPresentationUntilTick > 0
+                && currentTick > NetworkArcadeVictimPresentationUntilTick)
+            {
+                NetworkArcadeVictimPresentationUntilTick = 0;
+            }
 
             NetworkRamDriveAssist01 = 0f;
             NetworkVictimPushAssist01 = 0f;
@@ -1152,7 +1164,8 @@ namespace Sumo
             float acceleration,
             float energy01,
             float forceMultiplier,
-            int startTick)
+            int startTick,
+            int arcadePresentationUntilTick = 0)
         {
             if (victim == null || !victim.HasStateAuthority)
             {
@@ -1230,7 +1243,70 @@ namespace Sumo
             victim.NetworkVictimPushEnergy01 = Mathf.Clamp01(energy01);
             victim.NetworkVictimPushForceMultiplier = resolvedForceMultiplier;
             victim.NetworkVictimPushAssist01 = Mathf.Max(victim.NetworkVictimPushAssist01, Mathf.Clamp01(Mathf.Max(energy01, phase == PushPhaseImpact ? 1f : 0f)));
+
+            if (phase == PushPhaseImpact)
+            {
+                int currentTick = GetCurrentTickOrFallback(victim, startTick);
+                int defaultUntilTick = currentTick + ImpactToRamHandoffTicks;
+                victim.ExtendArcadeVictimPresentationUntil(Mathf.Max(defaultUntilTick, arcadePresentationUntilTick));
+            }
         }
+
+        private static int GetCurrentTickOrFallback(SumoCollisionController controller, int fallbackTick)
+        {
+            return controller != null && controller.Runner != null
+                ? controller.Runner.Tick.Raw
+                : fallbackTick;
+        }
+
+        private void ExtendArcadeVictimPresentationUntil(int untilTick)
+        {
+            if (!HasStateAuthority || untilTick <= 0)
+            {
+                return;
+            }
+
+            NetworkArcadeVictimPresentationUntilTick = Mathf.Max(
+                NetworkArcadeVictimPresentationUntilTick,
+                untilTick);
+        }
+
+        private bool IsArcadeVictimPresentationWindowActive()
+        {
+            if (NetworkArcadeVictimPresentationUntilTick <= 0)
+            {
+                return false;
+            }
+
+            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            return currentTick <= NetworkArcadeVictimPresentationUntilTick;
+        }
+
+        private float GetArcadeVictimPresentationHandoffAssistFloor01()
+        {
+            if (!IsArcadeVictimPresentationWindowActive())
+            {
+                return 0f;
+            }
+
+            int currentTick = Runner != null ? Runner.Tick.Raw : Time.frameCount;
+            int handoffStartTick = NetworkArcadeVictimPresentationUntilTick - ImpactToRamHandoffTicks;
+            if (currentTick < handoffStartTick)
+            {
+                return 0f;
+            }
+
+            float handoffScale = SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick,
+                handoffStartTick,
+                ImpactToRamHandoffTicks,
+                0f);
+            return Mathf.Lerp(
+                ImpactToRamPresentationStartAssist,
+                ImpactToRamPresentationEndAssist,
+                handoffScale);
+        }
+
         private void EnsurePreSimVelocitySamples(int currentTick)
         {
             if (Runner == null)
@@ -1276,7 +1352,8 @@ namespace Sumo
 
         public bool IsArcadeBurstVictimPresentationActive()
         {
-            return NetworkVictimPushPhase == PushPhaseImpact;
+            return NetworkVictimPushPhase == PushPhaseImpact
+                || IsArcadeVictimPresentationWindowActive();
         }
 
         public int ApplyFatsoActivationBurst()
@@ -1532,8 +1609,9 @@ namespace Sumo
                     float normalizedEnergy = state.InitialRamEnergy > 0.0001f
                         ? Mathf.Clamp01(state.RamEnergy / state.InitialRamEnergy)
                         : 0f;
-                    float contactAssist = Mathf.Clamp01(state.RamContactBlend);
-                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
+                    float handoffScale = GetImpactToRamHandoffScale(state, currentTick);
+                    float contactAssist = GetEffectiveRamContactBlend(state, currentTick);
+                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist) * handoffScale);
                     assist = Mathf.Max(assist, ramAssist);
                 }
             }
@@ -1613,8 +1691,9 @@ namespace Sumo
                     float normalizedEnergy = state.InitialRamEnergy > 0.0001f
                         ? Mathf.Clamp01(state.RamEnergy / state.InitialRamEnergy)
                         : 0f;
-                    float contactAssist = Mathf.Clamp01(state.RamContactBlend);
-                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
+                    float handoffScale = GetImpactToRamHandoffScale(state, currentTick);
+                    float contactAssist = GetEffectiveRamContactBlend(state, currentTick);
+                    float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist) * handoffScale);
                     assist = Mathf.Max(assist, Mathf.Lerp(0.35f, 1f, ramAssist));
                 }
             }
@@ -1631,6 +1710,11 @@ namespace Sumo
 
             bool arcadeBurstPresentation = IsArcadeBurstVictimPresentationActive();
             float assist = Mathf.Clamp01(NetworkVictimPushAssist01);
+            if (arcadeBurstPresentation)
+            {
+                assist = Mathf.Max(assist, GetArcadeVictimPresentationHandoffAssistFloor01());
+            }
+
             if (!arcadeBurstPresentation)
             {
                 assist = Mathf.Min(assist, 0.30f);
@@ -2662,6 +2746,7 @@ namespace Sumo
             if (!hasContact)
             {
                 pairState.RamContactBlend = Mathf.Max(0f, pairState.RamContactBlend * 0.5f);
+                BeginImpactToRamHandoff(ref pairState, currentTick, victim, mode, false);
                 pairState.State = SumoPairState.Ramming;
                 return;
             }
@@ -2674,6 +2759,7 @@ namespace Sumo
             }
 
             pairState.RamContactBlend = Mathf.Max(pairState.RamContactBlend, RamContactStartBlend);
+            BeginImpactToRamHandoff(ref pairState, currentTick, victim, mode, true);
             pairState.State = SumoPairState.Ramming;
         }
 
@@ -2740,6 +2826,8 @@ namespace Sumo
             }
 
             pairState.RamContactBlend = Mathf.Min(1f, pairState.RamContactBlend + deltaTime * RamContactBlendRisePerSecond);
+            float handoffScale = GetImpactToRamHandoffScale(pairState, currentTick);
+            float effectiveRamContactBlend = GetEffectiveRamContactBlend(pairState, currentTick);
 
             Vector3 liveDirection = ResolveDirection(
                 attacker._rigidbody.worldCenterOfMass,
@@ -2884,7 +2972,7 @@ namespace Sumo
                 attackerForwardSpeed,
                 directionDot,
                 isPressing,
-                pairState.RamContactBlend);
+                effectiveRamContactBlend);
 
             float energy01Before = pairState.InitialRamEnergy > 0.0001f
                 ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
@@ -2894,6 +2982,7 @@ namespace Sumo
                 victimForwardSpeed,
                 shoveForceMultiplier,
                 energy01Before);
+            desiredVictimSpeed = Mathf.Lerp(victimForwardSpeed, desiredVictimSpeed, handoffScale);
             float victimSpeedGap = Mathf.Max(0f, desiredVictimSpeed - victimForwardSpeed);
             float scaledVictimAcceleration = SumoImpactResolver.ApplyShoveForceMultiplier(ramTick.VictimAcceleration, shoveForceMultiplier);
             float scaledAttackerAcceleration = SumoImpactResolver.ApplyShoveForceMultiplier(ramTick.AttackerAcceleration, shoveForceMultiplier);
@@ -2935,7 +3024,7 @@ namespace Sumo
 
             if (mode == SimulationMode.Authoritative && hasContact)
             {
-                float presentationStrength = ComputeVictimPresentationRamStrength(attacker, pairState);
+                float presentationStrength = ComputeVictimPresentationRamStrength(attacker, pairState, currentTick) * handoffScale;
                 if (presentationStrength > 0.0001f)
                 {
                     victim.PublishVictimPresentationImpact(presentationStrength);
@@ -2944,8 +3033,9 @@ namespace Sumo
                 float energy01 = pairState.InitialRamEnergy > 0.0001f
                     ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
                     : 0f;
+                float publishedEnergy01 = energy01 * handoffScale;
 
-                PublishRamDrive(attacker, Mathf.Max(energy01, 0.15f));
+                PublishRamDrive(attacker, Mathf.Max(energy01, 0.15f) * handoffScale);
 
                 if (hasUsefulGameplayPush)
                 {
@@ -2958,7 +3048,7 @@ namespace Sumo
                         liveDirection,
                         desiredVictimSpeed,
                         cappedVictimAcceleration,
-                        energy01,
+                        publishedEnergy01,
                         shoveForceMultiplier,
                         pushStartTick);
                 }
@@ -3497,6 +3587,7 @@ namespace Sumo
             pairState.LastAppliedImpactDeltaV = cappedVictimDeltaV;
             pairState.ShoveForceMultiplier = shoveForceMultiplier;
             pairState.RamContactBlend = 0f;
+            pairState.RamHandoffStartTick = int.MinValue;
             pairState.InitialRamEnergy = impactResult.OpensRamState ? impactResult.InitialRamEnergy : 0f;
             pairState.RamEnergy = pairState.InitialRamEnergy;
             pairState.ContactDirection = impulseDirection;
@@ -3558,7 +3649,8 @@ namespace Sumo
                     victim.physicsConfig != null ? Mathf.Min(victim.physicsConfig.VictimLocalImpactCatchupAcceleration, 28f) : 28f,
                     1f,
                     shoveForceMultiplier,
-                    currentTick);
+                    currentTick,
+                    currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration) + ImpactToRamHandoffTicks);
 
                 attacker.ImpactApplied?.Invoke(impactData);
                 victim.ImpactApplied?.Invoke(impactData);
@@ -3741,6 +3833,7 @@ namespace Sumo
             pairState.LastAppliedImpactDeltaV = reImpactDeltaV;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
             pairState.RamContactBlend = Mathf.Max(pairState.RamContactBlend, RamContactStartBlend);
+            pairState.RamHandoffStartTick = currentTick;
             pairState.RamEnergy = SumoImpactResolver.ComputeRemainingRamEnergyAfterReImpact(
                 pairState.RamEnergy,
                 pairState.InitialRamEnergy);
@@ -3780,7 +3873,8 @@ namespace Sumo
                     victim.physicsConfig != null ? Mathf.Min(victim.physicsConfig.VictimLocalImpactCatchupAcceleration, 28f) : 28f,
                     Mathf.Clamp01(energyScale),
                     pairState.ShoveForceMultiplier,
-                    currentTick);
+                    currentTick,
+                    currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration) + ImpactToRamHandoffTicks);
 
                 attacker.ImpactApplied?.Invoke(impactData);
                 victim.ImpactApplied?.Invoke(impactData);
@@ -3893,6 +3987,7 @@ namespace Sumo
             pairState.InitialImpactElapsed = 0f;
             pairState.ImpactRamUnlockTick = 0;
             pairState.ImpactBurstGraceUntilTick = 0;
+            pairState.RamHandoffStartTick = int.MinValue;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
@@ -4040,6 +4135,7 @@ namespace Sumo
             pairState.InitialImpactElapsed = 0f;
             pairState.ImpactRamUnlockTick = 0;
             pairState.ImpactBurstGraceUntilTick = 0;
+            pairState.RamHandoffStartTick = int.MinValue;
             pairState.InitialVictimDeltaV = 0f;
             pairState.InitialAttackerDeltaV = 0f;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
@@ -4063,7 +4159,8 @@ namespace Sumo
 
         private static float ComputeVictimPresentationRamStrength(
             SumoCollisionController attacker,
-            in SumoRamState pairState)
+            in SumoRamState pairState,
+            int currentTick)
         {
             float stopThreshold = GetRamStopThreshold(attacker);
             if (pairState.RamEnergy <= stopThreshold)
@@ -4074,7 +4171,7 @@ namespace Sumo
             float normalizedEnergy = pairState.InitialRamEnergy > 0.0001f
                 ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
                 : 0f;
-            float contactAssist = Mathf.Clamp01(pairState.RamContactBlend);
+            float contactAssist = GetEffectiveRamContactBlend(pairState, currentTick);
             float ramAssist = Mathf.Clamp01(Mathf.Max(normalizedEnergy, contactAssist));
             return Mathf.Clamp01(Mathf.Lerp(0.35f, 1f, ramAssist));
         }
@@ -4416,6 +4513,35 @@ namespace Sumo
                 && currentTick < pairState.ImpactBurstGraceUntilTick;
         }
 
+        private static float GetImpactToRamHandoffScale(in SumoRamState pairState, int currentTick)
+        {
+            return SumoImpactResolver.ComputeImpactToRamHandoffScale(
+                currentTick,
+                pairState.RamHandoffStartTick,
+                ImpactToRamHandoffTicks,
+                ImpactToRamHandoffStartScale);
+        }
+
+        private static float GetEffectiveRamContactBlend(in SumoRamState pairState, int currentTick)
+        {
+            return Mathf.Clamp01(pairState.RamContactBlend * GetImpactToRamHandoffScale(pairState, currentTick));
+        }
+
+        private static void BeginImpactToRamHandoff(
+            ref SumoRamState pairState,
+            int currentTick,
+            SumoCollisionController victim,
+            SimulationMode mode,
+            bool extendPresentation)
+        {
+            pairState.RamHandoffStartTick = currentTick;
+
+            if (extendPresentation && mode == SimulationMode.Authoritative && victim != null)
+            {
+                victim.ExtendArcadeVictimPresentationUntil(currentTick + ImpactToRamHandoffTicks);
+            }
+        }
+
         private static float EvaluateImpactBurstIntegral(float normalizedTime, float frontload01)
         {
             float u = Mathf.Clamp01(normalizedTime);
@@ -4540,6 +4666,7 @@ namespace Sumo
             pairState.State = SumoPairState.RamDepleted;
             pairState.RamEnergy = 0f;
             pairState.RamContactBlend = 0f;
+            pairState.RamHandoffStartTick = int.MinValue;
             pairState.ReengageReadyTick = 0;
             pairState.ImpactRamUnlockTick = 0;
             pairState.ImpactBurstGraceUntilTick = 0;
@@ -4579,6 +4706,7 @@ namespace Sumo
             pairState.ShoveForceMultiplier = 1f;
             pairState.VictimIncomingPushMultiplierOverride = 0f;
             pairState.RamContactBlend = 0f;
+            pairState.RamHandoffStartTick = int.MinValue;
             pairState.InitialRamEnergy = 0f;
             pairState.RamEnergy = 0f;
         }
@@ -4755,6 +4883,7 @@ namespace Sumo
                 ImpactLatchTick = int.MinValue,
                 ImpactRamUnlockTick = 0,
                 ImpactBurstGraceUntilTick = 0,
+                RamHandoffStartTick = int.MinValue,
                 ContactEpisodeStartTick = currentTick,
                 LastStableBreakTick = 0,
                 ReimpactSuppressedUntilHardBreak = false
