@@ -451,6 +451,80 @@ namespace Sumo.Tests
         }
 
         [Test]
+        public void ComputeEnergyScaledRamDeltaVCap_DecreasesWithEnergy()
+        {
+            float low = SumoImpactResolver.ComputeEnergyScaledRamDeltaVCap(0.24f, 0.2f);
+            float mid = SumoImpactResolver.ComputeEnergyScaledRamDeltaVCap(0.24f, 0.55f);
+            float high = SumoImpactResolver.ComputeEnergyScaledRamDeltaVCap(0.24f, 1f);
+
+            Assert.Less(low, mid);
+            Assert.Less(mid, high);
+            Assert.AreEqual(0.24f, high, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeEnergyScaledPushTargetSpeed_DecreasesWithEnergy()
+        {
+            float victimForwardSpeed = 0f;
+            float low = SumoImpactResolver.ComputeEnergyScaledPushTargetSpeed(
+                attackerForwardSpeed: 5f,
+                victimForwardSpeed: victimForwardSpeed,
+                targetSpeedScale: 2f,
+                energy01: 0.2f);
+            float high = SumoImpactResolver.ComputeEnergyScaledPushTargetSpeed(
+                attackerForwardSpeed: 5f,
+                victimForwardSpeed: victimForwardSpeed,
+                targetSpeedScale: 2f,
+                energy01: 1f);
+
+            Assert.Less(low, high);
+            Assert.AreEqual(10f, high, 0.0001f);
+        }
+
+        [Test]
+        public void ComputeMonotonicReImpactDeltaV_DoesNotExceedPreviousImpact()
+        {
+            float deltaV = SumoImpactResolver.ComputeMonotonicReImpactDeltaV(
+                requestedDeltaV: 20f,
+                cappedPushDeltaV: 12f,
+                energyScale: 1f,
+                maxDeltaVPerTick: 10f,
+                previousImpactDeltaV: 0.75f);
+
+            Assert.AreEqual(0.75f, deltaV, 0.0001f);
+        }
+
+        [Test]
+        public void ShouldStartReImpact_RejectsMicroBreakWithReengageThresholds()
+        {
+            Assert.IsFalse(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 20,
+                lastImpactTick: 10,
+                breakStartTick: 18,
+                maxSeparationSinceBreak: 0.04f,
+                ramEnergy: 1f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true,
+                minBreakTicks: 4,
+                minSeparation: 0.18f));
+
+            Assert.IsTrue(SumoImpactResolver.ShouldStartReImpact(
+                currentTick: 24,
+                lastImpactTick: 10,
+                breakStartTick: 18,
+                maxSeparationSinceBreak: 0.2f,
+                ramEnergy: 1f,
+                initialRamEnergy: 2f,
+                cappedDeltaV: 0.08f,
+                attackerStillWins: true,
+                directionValid: true,
+                minBreakTicks: 4,
+                minSeparation: 0.18f));
+        }
+
+        [Test]
         public void ShouldApplyPredictedVictimPush_RequiresContactAndAttackerOwnedRemoteProxy()
         {
             Assert.IsTrue(SumoImpactResolver.ShouldApplyPredictedVictimPush(

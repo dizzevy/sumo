@@ -241,6 +241,39 @@ namespace Sumo
                 + ComputeCappedPushDeltaV(attackerForwardSpeed, victimForwardSpeed, targetSpeedScale);
         }
 
+        public static float ComputeEnergyScaledPushTargetSpeed(
+            float attackerForwardSpeed,
+            float victimForwardSpeed,
+            float targetSpeedScale,
+            float energy01,
+            float depletedTargetShare = 0.35f)
+        {
+            float energy = Mathf.Clamp01(SanitizeNonNegativeFinite(energy01));
+            float resolvedScale = ResolveShoveForceMultiplier(targetSpeedScale);
+            float baseScale = Mathf.Min(1f, resolvedScale);
+            float bonusScale = Mathf.Max(0f, resolvedScale - baseScale) * energy;
+            float depletedScale = Mathf.Clamp01(SanitizeNonNegativeFinite(depletedTargetShare));
+            float scaledBase = baseScale * Mathf.Lerp(depletedScale, 1f, energy);
+            return ComputeCappedPushTargetSpeed(attackerForwardSpeed, victimForwardSpeed, scaledBase + bonusScale);
+        }
+
+        public static float ComputeEnergyScaledRamDeltaVCap(
+            float maxDeltaVPerTick,
+            float energy01,
+            float depletedCapShare = 0.12f)
+        {
+            float maxDelta = SanitizeNonNegativeFinite(maxDeltaVPerTick);
+            if (maxDelta <= 0.0001f)
+            {
+                return 0f;
+            }
+
+            float energy = Mathf.Clamp01(SanitizeNonNegativeFinite(energy01));
+            float shapedEnergy = energy * energy * (3f - 2f * energy);
+            float floor = Mathf.Clamp01(SanitizeNonNegativeFinite(depletedCapShare));
+            return maxDelta * Mathf.Lerp(floor, 1f, shapedEnergy);
+        }
+
         public static float ComputeCappedPhysicalImpactSpeed(
             SumoBallPhysicsConfig config,
             float entryPhysicalForwardSpeed,
@@ -450,6 +483,22 @@ namespace Sumo
                 * Mathf.Clamp01(SanitizeNonNegativeFinite(energyScale));
             float cappedRequest = Mathf.Min(scaledRequest, SanitizeNonNegativeFinite(cappedPushDeltaV));
             return ClampImpactDeltaVStep(cappedRequest, maxDeltaVPerTick);
+        }
+
+        public static float ComputeMonotonicReImpactDeltaV(
+            float requestedDeltaV,
+            float cappedPushDeltaV,
+            float energyScale,
+            float maxDeltaVPerTick,
+            float previousImpactDeltaV)
+        {
+            float deltaV = ComputeReImpactDeltaV(
+                requestedDeltaV,
+                cappedPushDeltaV,
+                energyScale,
+                maxDeltaVPerTick);
+            float previous = SanitizeNonNegativeFinite(previousImpactDeltaV);
+            return previous > 0.0001f ? Mathf.Min(deltaV, previous) : deltaV;
         }
 
         public static bool ShouldUseFirstImpactVisualLaunch(SumoImpactResponseMode responseMode)

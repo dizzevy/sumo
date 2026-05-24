@@ -41,6 +41,8 @@ namespace Sumo
         public int ImpactLatchTick;
         public int ImpactRamUnlockTick;
         public int ImpactBurstGraceUntilTick;
+        public int ContactEpisodeStartTick;
+        public int LastStableBreakTick;
         public int MaxRamDurationTicks;
         public bool HasPendingEnter;
         public bool ReimpactSuppressedUntilHardBreak;
@@ -58,6 +60,7 @@ namespace Sumo
         public float InitialImpactElapsed;
         public float InitialVictimDeltaV;
         public float InitialAttackerDeltaV;
+        public float LastAppliedImpactDeltaV;
         public float ShoveForceMultiplier;
         public float VictimIncomingPushMultiplierOverride;
         public float RamContactBlend;

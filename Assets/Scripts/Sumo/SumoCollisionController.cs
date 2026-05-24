@@ -52,9 +52,6 @@ namespace Sumo
         private const float NeutralContactSeparationSpeed = 1.2f;
         private const float NeutralContactMinClosingSpeed = 0.25f;
         private const float AuthorityVictimPushDirectionBlend = 0.12f;
-        private const float AuthorityVictimPushTargetDecayFloor = 0.92f;
-        private const float AuthorityVictimPushAccelerationDecayFloor = 0.9f;
-        private const float AuthorityVictimPushEnergyDecayFloor = 0.94f;
         private const float FallbackVictimAnticipationMinClosingSpeed = 0.95f;
         private const float FallbackVictimAnticipationMinDirectionDot = 0.2f;
         private const int FallbackVictimAnticipationTtlTicks = 8;
@@ -291,6 +288,7 @@ namespace Sumo
         private const float ActiveCombatVictimRamAuthorityResponseShare = 0.08f;
         private const float ActiveCombatVictimRamPredictedResponseShare = 0.02f;
         private const float ActiveCombatPenetrationSlopBonus = 0.012f;
+        private const float MinimumGameplayPushDeltaV = 0.006f;
         private const int PredictedRollbackHistoryTicks = 192;
         private const float LowTierRamSeedEnergyPadding = 0.01f;
         private const float FatsoActivationBurstContactPadding = 0.55f;
@@ -636,22 +634,7 @@ namespace Sumo
                         : LocalVictimRamTargetRiseScale;
                     float riseRate = Mathf.Max(0.01f, Mathf.Max(_localVictimCatchupAcceleration, sample.Acceleration) * riseScale);
                     float fallRate = Mathf.Max(0.01f, riseRate * LocalVictimTargetFallScale);
-                    float preservedTargetFloor = 0f;
-
-                    bool preservingImpactLaunch = currentTick <= _localVictimImpactLockUntilTick;
-                    if (sample.Phase == PushPhaseRam)
-                    {
-                        if (preservingImpactLaunch)
-                        {
-                            preservedTargetFloor = _localVictimCatchupPeakTargetSpeed;
-                        }
-                        else if (currentTick - _localVictimCatchupPeakTick <= LocalVictimPeakHoldTicks)
-                        {
-                            preservedTargetFloor = _localVictimCatchupPeakTargetSpeed * LocalVictimRamPeakSpeedFloor;
-                        }
-                    }
-
-                    float rawTargetSpeed = Mathf.Max(sample.TargetSpeed, preservedTargetFloor);
+                    float rawTargetSpeed = sample.TargetSpeed;
                     float targetRate = rawTargetSpeed >= _localVictimCatchupTargetSpeed ? riseRate : fallRate;
                     _localVictimCatchupTargetSpeed = Mathf.MoveTowards(_localVictimCatchupTargetSpeed, rawTargetSpeed, targetRate * dt);
                     _localVictimCatchupAcceleration = Mathf.MoveTowards(
@@ -670,6 +653,13 @@ namespace Sumo
                     if (_localVictimCatchupTargetSpeed > _localVictimCatchupPeakTargetSpeed)
                     {
                         _localVictimCatchupPeakTargetSpeed = _localVictimCatchupTargetSpeed;
+                        _localVictimCatchupPeakTick = currentTick;
+                    }
+                    else if (sample.Phase == PushPhaseRam)
+                    {
+                        _localVictimCatchupPeakTargetSpeed = Mathf.Min(
+                            _localVictimCatchupPeakTargetSpeed,
+                            _localVictimCatchupTargetSpeed);
                         _localVictimCatchupPeakTick = currentTick;
                     }
 
@@ -1078,18 +1068,18 @@ namespace Sumo
                 currentForwardSpeed,
                 _localVictimCatchupTargetSpeed * physicsConfig.VictimLocalPushPrediction);
 
-            if (currentTick <= _localVictimImpactLockUntilTick)
+            bool arcadeCatchup = phase == PushPhaseImpact && !_localVictimCatchupFromAnticipation;
+            if (arcadeCatchup && currentTick <= _localVictimImpactLockUntilTick)
             {
                 desiredForwardSpeed = Mathf.Max(desiredForwardSpeed, _localVictimCatchupPeakTargetSpeed);
             }
-            else if (currentTick - _localVictimCatchupPeakTick <= LocalVictimPeakHoldTicks)
+            else if (arcadeCatchup && currentTick - _localVictimCatchupPeakTick <= LocalVictimPeakHoldTicks)
             {
                 desiredForwardSpeed = Mathf.Max(
                     desiredForwardSpeed,
                     _localVictimCatchupPeakTargetSpeed * Mathf.Lerp(LocalVictimRamPeakSpeedFloor, 1f, assist01));
             }
 
-            bool arcadeCatchup = phase == PushPhaseImpact && !_localVictimCatchupFromAnticipation;
             float maxCatchupAcceleration = (arcadeCatchup ? 28f : 12f) * forceMultiplier;
             float configuredCatchupAcceleration = arcadeCatchup
                 ? Mathf.Min(physicsConfig.VictimLocalImpactCatchupAcceleration * forceMultiplier, maxCatchupAcceleration)
@@ -1204,12 +1194,18 @@ namespace Sumo
                     }
                 }
 
-                targetSpeed = Mathf.Max(0f, targetSpeed);
-                acceleration = Mathf.Max(0f, acceleration);
-                energy01 = Mathf.Clamp01(energy01);
-                forceMultiplier = Mathf.Max(
-                    forceMultiplier,
-                    _authorityVictimPushPreviousForceMultiplier * AuthorityVictimPushAccelerationDecayFloor);
+                targetSpeed = Mathf.Min(
+                    Mathf.Max(0f, targetSpeed),
+                    Mathf.Max(0f, victim._authorityVictimPushPreviousTargetSpeed));
+                acceleration = Mathf.Min(
+                    Mathf.Max(0f, acceleration),
+                    Mathf.Max(0f, victim._authorityVictimPushPreviousAcceleration));
+                energy01 = Mathf.Min(
+                    Mathf.Clamp01(energy01),
+                    Mathf.Clamp01(victim._authorityVictimPushPreviousEnergy01));
+                forceMultiplier = Mathf.Min(
+                    ResolveAppliedShoveForceMultiplier(forceMultiplier),
+                    victim._authorityVictimPushPreviousForceMultiplier);
             }
 
             float resolvedForceMultiplier = ResolveAppliedShoveForceMultiplier(forceMultiplier);
@@ -1840,11 +1836,32 @@ namespace Sumo
                     int contactBreakTicks = GetPairContactBreakGraceTicks(first, second);
                     bool contactRestarted = previousContactTick <= 0
                         || currentTick - previousContactTick > contactBreakTicks;
+                    bool firstContact = previousContactTick <= 0;
+                    bool suppressEnter = false;
+
+                    if (contactRestarted && !firstContact)
+                    {
+                        bool activeCombatContact = pairState.State == SumoPairState.InitialImpact
+                            || pairState.State == SumoPairState.Ramming;
+                        if (IsStableContactBreakForNewEpisode(pairState, currentTick, first, second))
+                        {
+                            if (!activeCombatContact)
+                            {
+                                ResetContactEpisodeBudget(ref pairState, currentTick);
+                            }
+                        }
+                        else
+                        {
+                            contactRestarted = false;
+                            suppressEnter = true;
+                            ClearReImpactBreakMarkers(ref pairState);
+                        }
+                    }
 
                     bool canCaptureEnter = pairState.State != SumoPairState.InitialImpact
                         && pairState.State != SumoPairState.Ramming;
 
-                    if ((contact.IsEnter || contactRestarted) && canCaptureEnter)
+                    if (!suppressEnter && (contact.IsEnter || contactRestarted) && canCaptureEnter)
                     {
                         ContactSnapshot snapshot = BuildContactSnapshotForPair(second, firstKey, secondKey, contact);
                         CaptureEnterSnapshot(
@@ -2854,10 +2871,7 @@ namespace Sumo
                 return;
             }
 
-            if (SumoImpactResolver.HasReImpactSeparation(
-                currentTick,
-                pairState.BreakStartTick,
-                pairState.MaxSeparationSinceBreak))
+            if (pairState.BreakStartTick > 0)
             {
                 ClearReImpactBreakMarkers(ref pairState);
             }
@@ -2872,10 +2886,14 @@ namespace Sumo
                 isPressing,
                 pairState.RamContactBlend);
 
-            float desiredVictimSpeed = SumoImpactResolver.ComputeCappedPushTargetSpeed(
+            float energy01Before = pairState.InitialRamEnergy > 0.0001f
+                ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
+                : 0f;
+            float desiredVictimSpeed = SumoImpactResolver.ComputeEnergyScaledPushTargetSpeed(
                 attackerForwardSpeed,
                 victimForwardSpeed,
-                shoveForceMultiplier);
+                shoveForceMultiplier,
+                energy01Before);
             float victimSpeedGap = Mathf.Max(0f, desiredVictimSpeed - victimForwardSpeed);
             float scaledVictimAcceleration = SumoImpactResolver.ApplyShoveForceMultiplier(ramTick.VictimAcceleration, shoveForceMultiplier);
             float scaledAttackerAcceleration = SumoImpactResolver.ApplyShoveForceMultiplier(ramTick.AttackerAcceleration, shoveForceMultiplier);
@@ -2883,20 +2901,20 @@ namespace Sumo
             if (deltaTime > 0f)
             {
                 cappedVictimAcceleration = Mathf.Min(cappedVictimAcceleration, victimSpeedGap / deltaTime);
-                if (pairState.ImpactResponseMode == SumoImpactResponseMode.SoftShove)
-                {
-                    cappedVictimAcceleration = Mathf.Min(
-                        cappedVictimAcceleration,
-                        GetScaledSoftShoveMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier) / deltaTime);
-                }
+                float ramDeltaVCap = SumoImpactResolver.ComputeEnergyScaledRamDeltaVCap(
+                    GetScaledSoftShoveMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier),
+                    energy01Before);
+                cappedVictimAcceleration = Mathf.Min(cappedVictimAcceleration, ramDeltaVCap / deltaTime);
             }
 
-            float appliedForceScale = scaledVictimAcceleration > 0.0001f
+            float cappedVictimDeltaV = deltaTime > 0f ? cappedVictimAcceleration * deltaTime : 0f;
+            bool hasUsefulGameplayPush = cappedVictimDeltaV >= MinimumGameplayPushDeltaV;
+            float appliedForceScale = scaledVictimAcceleration > 0.0001f && hasUsefulGameplayPush
                 ? Mathf.Clamp01(cappedVictimAcceleration / scaledVictimAcceleration)
                 : 0f;
             float cappedAttackerAcceleration = scaledAttackerAcceleration * appliedForceScale;
 
-            if (ramTick.HasForce && cappedVictimAcceleration > 0.0001f)
+            if (ramTick.HasForce && cappedVictimAcceleration > 0.0001f && hasUsefulGameplayPush)
             {
                 if (ShouldApplyPredictedVictimPush(attacker, victim, mode, hasContact))
                 {
@@ -2929,8 +2947,11 @@ namespace Sumo
 
                 PublishRamDrive(attacker, Mathf.Max(energy01, 0.15f));
 
-                if (cappedVictimAcceleration > 0.0001f || victimSpeedGap > 0.01f)
+                if (hasUsefulGameplayPush)
                 {
+                    int pushStartTick = pairState.ImpactLatchTick > 0
+                        ? Mathf.Max(pairState.StartTick, pairState.ImpactLatchTick)
+                        : pairState.StartTick;
                     PublishVictimPush(
                         victim,
                         PushPhaseRam,
@@ -2939,7 +2960,7 @@ namespace Sumo
                         cappedVictimAcceleration,
                         energy01,
                         shoveForceMultiplier,
-                        pairState.StartTick);
+                        pushStartTick);
                 }
             }
 
@@ -3473,6 +3494,7 @@ namespace Sumo
             pairState.ImpactBurstGraceUntilTick = currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration);
             pairState.InitialVictimDeltaV = cappedVictimDeltaV;
             pairState.InitialAttackerDeltaV = impactResult.AttackerRecoilImpulse / Mathf.Max(0.01f, attacker._rigidbody.mass);
+            pairState.LastAppliedImpactDeltaV = cappedVictimDeltaV;
             pairState.ShoveForceMultiplier = shoveForceMultiplier;
             pairState.RamContactBlend = 0f;
             pairState.InitialRamEnergy = impactResult.OpensRamState ? impactResult.InitialRamEnergy : 0f;
@@ -3483,6 +3505,10 @@ namespace Sumo
             pairState.MaxSeparationSinceBreak = 0f;
             pairState.ReengageReadyTick = 0;
             pairState.ImpactLatchTick = currentTick;
+            if (pairState.ContactEpisodeStartTick <= 0)
+            {
+                pairState.ContactEpisodeStartTick = currentTick;
+            }
             pairState.ReimpactSuppressedUntilHardBreak = true;
             ApplyInitialImpactKickoff(ref pairState, attacker, victim, mode);
 
@@ -3626,6 +3652,8 @@ namespace Sumo
                     shoveForceMultiplier)
                 : 0f;
 
+            int reengageBreakTicks = GetPairReengageBreakTicks(attacker, victim);
+            float reengageDistance = GetPairReengageDistance(attacker, victim);
             if (!SumoImpactResolver.ShouldStartReImpact(
                 currentTick,
                 pairState.LastImpactTick,
@@ -3635,7 +3663,9 @@ namespace Sumo
                 pairState.InitialRamEnergy,
                 cappedVictimDeltaV,
                 attackerStillWins,
-                directionValid))
+                directionValid,
+                minBreakTicks: reengageBreakTicks,
+                minSeparation: reengageDistance))
             {
                 return false;
             }
@@ -3666,11 +3696,12 @@ namespace Sumo
             float requestedVictimDeltaV = SumoImpactResolver.ApplyShoveForceMultiplier(
                 impactResult.VictimImpulse / Mathf.Max(0.01f, victim._rigidbody.mass),
                 shoveForceMultiplier);
-            float reImpactDeltaV = SumoImpactResolver.ComputeReImpactDeltaV(
+            float reImpactDeltaV = SumoImpactResolver.ComputeMonotonicReImpactDeltaV(
                 requestedVictimDeltaV,
                 cappedVictimDeltaV,
                 energyScale,
-                GetScaledArcadeBurstMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier));
+                GetScaledArcadeBurstMaxDeltaVPerTick(attacker, victim, shoveForceMultiplier),
+                pairState.LastAppliedImpactDeltaV);
 
             if (reImpactDeltaV <= 0.0001f)
             {
@@ -3707,6 +3738,7 @@ namespace Sumo
             pairState.ImpactBurstGraceUntilTick = currentTick + GetImpactBurstGraceTicks(pairState.InitialImpactDuration);
             pairState.InitialVictimDeltaV = reImpactDeltaV;
             pairState.InitialAttackerDeltaV = attackerRecoilDeltaV;
+            pairState.LastAppliedImpactDeltaV = reImpactDeltaV;
             pairState.ShoveForceMultiplier = ResolveAppliedShoveForceMultiplier(shoveForceMultiplier);
             pairState.RamContactBlend = Mathf.Max(pairState.RamContactBlend, RamContactStartBlend);
             pairState.RamEnergy = SumoImpactResolver.ComputeRemainingRamEnergyAfterReImpact(
@@ -3879,19 +3911,28 @@ namespace Sumo
             {
                 PublishRamDrive(attacker, 1f);
                 float victimForwardSpeed = Vector3.Dot(victim._rigidbody.linearVelocity, ramDirection);
-                float desiredVictimSpeed = SumoImpactResolver.ComputeCappedPushTargetSpeed(
-                    attackerForwardSpeed,
-                    victimForwardSpeed,
-                    pairState.ShoveForceMultiplier);
                 float energy01 = pairState.InitialRamEnergy > 0.0001f
                     ? Mathf.Clamp01(pairState.RamEnergy / pairState.InitialRamEnergy)
                     : 0f;
+                float desiredVictimSpeed = SumoImpactResolver.ComputeEnergyScaledPushTargetSpeed(
+                    attackerForwardSpeed,
+                    victimForwardSpeed,
+                    pairState.ShoveForceMultiplier,
+                    energy01);
                 float ramAcceleration = attacker.physicsConfig != null
                     ? attacker.physicsConfig.RamBaseAcceleration
                     : 14f;
                 ramAcceleration = SumoImpactResolver.ApplyShoveForceMultiplier(
                     ramAcceleration,
                     pairState.ShoveForceMultiplier);
+                float deltaTime = Runner != null ? Runner.DeltaTime : Time.fixedDeltaTime;
+                if (deltaTime > 0f)
+                {
+                    float ramDeltaVCap = SumoImpactResolver.ComputeEnergyScaledRamDeltaVCap(
+                        GetScaledSoftShoveMaxDeltaVPerTick(attacker, victim, pairState.ShoveForceMultiplier),
+                        energy01);
+                    ramAcceleration = Mathf.Min(ramAcceleration, ramDeltaVCap / deltaTime);
+                }
                 PublishVictimPush(
                     victim,
                     PushPhaseRam,
@@ -4088,6 +4129,26 @@ namespace Sumo
         {
             pairState.BreakStartTick = 0;
             pairState.MaxSeparationSinceBreak = 0f;
+        }
+
+        private static bool IsStableContactBreakForNewEpisode(
+            in SumoRamState pairState,
+            int currentTick,
+            SumoCollisionController first,
+            SumoCollisionController second)
+        {
+            return pairState.BreakStartTick > 0
+                && currentTick - pairState.BreakStartTick >= GetPairReengageBreakTicks(first, second)
+                && pairState.MaxSeparationSinceBreak >= GetPairReengageDistance(first, second);
+        }
+
+        private static void ResetContactEpisodeBudget(ref SumoRamState pairState, int currentTick)
+        {
+            pairState.ContactEpisodeStartTick = currentTick;
+            pairState.LastStableBreakTick = pairState.BreakStartTick;
+            pairState.LastAppliedImpactDeltaV = 0f;
+            pairState.ReimpactSuppressedUntilHardBreak = false;
+            ClearReImpactBreakMarkers(ref pairState);
         }
 
         private static bool ShouldRemoveState(in SumoRamState pairState, int currentTick, int contactBreakTicks)
@@ -4683,6 +4744,7 @@ namespace Sumo
                 InitialImpactElapsed = 0f,
                 InitialVictimDeltaV = 0f,
                 InitialAttackerDeltaV = 0f,
+                LastAppliedImpactDeltaV = 0f,
                 ShoveForceMultiplier = 1f,
                 VictimIncomingPushMultiplierOverride = 0f,
                 RamContactBlend = 0f,
@@ -4693,6 +4755,8 @@ namespace Sumo
                 ImpactLatchTick = int.MinValue,
                 ImpactRamUnlockTick = 0,
                 ImpactBurstGraceUntilTick = 0,
+                ContactEpisodeStartTick = currentTick,
+                LastStableBreakTick = 0,
                 ReimpactSuppressedUntilHardBreak = false
             };
         }
